@@ -11,6 +11,7 @@ interface NewsItem {
   source?: string;
   content_snippet?: string;
   publish_date?: string;
+  content_type?: string;
 }
 
 interface NewsResultsProps {
@@ -65,9 +66,25 @@ export const NewsResults: React.FC<NewsResultsProps> = ({ news, isLoading = fals
             <Card key={item.id} className="p-4 border border-border hover:shadow-card transition-shadow">
               <div className="space-y-3">
                 <div className="flex items-start justify-between gap-4">
-                  <h4 className="font-medium text-foreground leading-tight flex-1">
-                    {item.title}
-                  </h4>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <h4 className="font-medium text-foreground leading-tight">
+                        {item.title}
+                      </h4>
+                      {item.content_type && (
+                        <Badge 
+                          variant={
+                            item.content_type.includes('PTT') || item.content_type.includes('Dcard') || 
+                            item.content_type.includes('Facebook') || item.content_type.includes('Line') ||
+                            item.content_type.includes('Instagram') ? 'secondary' : 'outline'
+                          }
+                          className="text-xs"
+                        >
+                          {item.content_type}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
                   <Button variant="outline" size="sm" asChild>
                     <a href={item.url} target="_blank" rel="noopener noreferrer">
                       <ExternalLink className="h-3 w-3" />

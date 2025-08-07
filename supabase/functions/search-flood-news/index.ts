@@ -158,74 +158,115 @@ function generateMockFloodNews(address: string, searchId: string) {
   let newsTemplates = [];
   
   if (isTainan) {
-    // Specific news for Tainan August 2025 flood event
+    // Specific news for Tainan August 2025 flood event with social media discussions
     newsTemplates = [
       {
         title: `台南西南氣流重創！${mainLocation}積水深達50公分 居民急撤離`,
         content_snippet: `2025年8月2日西南氣流帶來強降雨，台南市多處嚴重積水，${mainLocation}一帶積水深度達50公分，多位居民緊急撤離。市府已啟動一級開設應變中心。`,
         source: '中央社',
         url: 'https://example.com/tainan-flood-1',
-        publish_date: '2025-08-02T08:00:00.000Z'
+        publish_date: '2025-08-02T08:00:00.000Z',
+        content_type: '官方新聞'
       },
       {
-        title: `【即時】台南豪雨不斷 ${mainLocation}道路成河流 車輛拋錨`,
-        content_snippet: `持續性豪雨造成台南市區多處道路積水，${mainLocation}主要道路完全無法通行，已有多輛汽機車拋錨受困。`,
-        source: '自由時報',
-        url: 'https://example.com/tainan-flood-2',
-        publish_date: '2025-08-02T10:30:00.000Z'
-      },
-      {
-        title: `台南市民怨：${mainLocation}年年淹水何時了？排水系統亟需改善`,
-        content_snippet: `西南氣流再度重創台南，${mainLocation}居民在社群媒體發聲，質疑市府治水政策效果，要求儘速改善排水設施。`,
+        title: `[爆卦] 台南${mainLocation}根本變成威尼斯了！！！`,
+        content_snippet: `本魯家住${mainLocation}附近，今天早上起床發現外面根本是海啊！機車全部都泡水了QQ 市長治水政策到底在幹嘛？每年都說要改善結果咧？ 推文：噓 god123: 又在亂 08/02 10:23 → rain456: 真的誇張，我家也淹了 08/02 10:24`,
         source: 'PTT八卦板',
-        url: 'https://example.com/tainan-flood-3',
-        publish_date: '2025-08-03T14:00:00.000Z'
+        url: 'https://example.com/tainan-flood-ptt',
+        publish_date: '2025-08-02T10:15:00.000Z',
+        content_type: 'PTT討論'
+      },
+      {
+        title: `台南${mainLocation}淹水實況 - 媽媽我想回家😭`,
+        content_snippet: `ㄨㄚˊ賽！今天經過${mainLocation}嚇死我了，水淹到小腿肚了還有人騎車過去，根本玩命關頭台南版。拍了影片給大家看看現況... B1: 太扯了吧 B2: 政府快出來負責啊 B3: 台南治水真的要加油了`,
+        source: 'Dcard',
+        url: 'https://example.com/tainan-flood-dcard',
+        publish_date: '2025-08-02T14:30:00.000Z',
+        content_type: 'Dcard分享'
+      },
+      {
+        title: `【台南${mainLocation}淹水】里長緊急通報：請大家避開這些路段！`,
+        content_snippet: `各位里民大家好！因為西南氣流影響，${mainLocation}多處道路積水嚴重，請大家盡量避開以下路段：... 有需要協助的長輩請聯繫里辦公處，我們有志工可以幫忙。大家互相幫忙，平安度過這次風雨！`,
+        source: '台南${mainLocation}里Facebook社團',
+        url: 'https://example.com/tainan-flood-fb',
+        publish_date: '2025-08-02T11:45:00.000Z',
+        content_type: 'Facebook社團'
+      },
+      {
+        title: `Line群組瘋傳！${mainLocation}淹水照片集 居民互助自救`,
+        content_snippet: `台南${mainLocation}居民Line群組瘋傳淹水現況照片，群組內居民紛紛分享即時路況、提供載送服務，展現鄰里互助精神。有居民表示：「雖然淹水很慘，但看到大家互相幫忙很感動」`,
+        source: '在地生活Line群組',
+        url: 'https://example.com/tainan-flood-line',
+        publish_date: '2025-08-02T16:20:00.000Z',
+        content_type: 'Line群組討論'
+      },
+      {
+        title: `#台南淹水 #${mainLocation} 網友直播淹水實況獲萬人觀看`,
+        content_snippet: `網友在IG直播${mainLocation}淹水實況，吸引上萬人觀看。直播中可見道路積水嚴重，部分車輛拋錨，網友留言：「台南治水真的要加油」、「希望大家都平安」。直播主呼籲大家注意安全。`,
+        source: 'Instagram直播',
+        url: 'https://example.com/tainan-flood-ig',
+        publish_date: '2025-08-02T13:15:00.000Z',
+        content_type: 'Instagram直播'
       },
       {
         title: `台南災情慘重！${mainLocation}商家損失慘重 市府宣布災害補助`,
-        content_snippet: `西南氣流造成的淹水災情，讓${mainLocation}多家商店泡水，估計損失上百萬元。台南市政府宣布啟動災害救助機制。`,
+        content_snippet: `西南氣流造成的淹水災情，讓${mainLocation}多家商店泡水，估計損失上百萬元。台南市政府宣布啟動災害救助機制，受災戶可申請相關補助。`,
         source: '聯合新聞網',
-        url: 'https://example.com/tainan-flood-4',
-        publish_date: '2025-08-04T09:15:00.000Z'
-      },
-      {
-        title: `台南淹水影片瘋傳 ${mainLocation}機車騎士涉水前進`,
-        content_snippet: `網友在社群平台分享${mainLocation}淹水影片，只見機車騎士小心翼翼涉水前進，引發網友熱議台南排水問題。`,
-        source: 'Dcard',
-        url: 'https://example.com/tainan-flood-5',
-        publish_date: '2025-08-02T16:45:00.000Z'
+        url: 'https://example.com/tainan-flood-gov',
+        publish_date: '2025-08-04T09:15:00.000Z',
+        content_type: '官方新聞'
       }
     ];
   } else {
-    // General flood-related news for other areas
+    // General flood-related news for other areas with social media content
     newsTemplates = [
       {
         title: `${mainLocation}豪雨成災 積水深度破紀錄`,
-        content_snippet: `近日持續降雨造成${mainLocation}地區嚴重積水，部分路段積水深度超過40公分，影響交通及民眾生活。`,
+        content_snippet: `近日持續降雨造成${mainLocation}地區嚴重積水，部分路段積水深度超過40公分，影響交通及民眾生活。當地里長呼籲居民注意安全。`,
         source: '台灣新聞網',
         url: 'https://example.com/flood-1',
-        publish_date: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString()
+        publish_date: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString(),
+        content_type: '官方新聞'
+      },
+      {
+        title: `[分享] ${mainLocation}淹水了...大家小心啊`,
+        content_snippet: `剛才經過${mainLocation}，整條路都是水耶！看起來有膝蓋高，建議大家繞路。已經看到好幾台車在那邊拋錨了QQ 有人知道其他路況嗎？ 留言：真的假的？我等等要經過 / 謝謝分享，我改走別條路`,
+        source: 'Dcard',
+        url: 'https://example.com/flood-dcard',
+        publish_date: new Date(Date.now() - Math.random() * 1 * 24 * 60 * 60 * 1000).toISOString(),
+        content_type: 'Dcard分享'
+      },
+      {
+        title: `${mainLocation}居民Line群組：「又淹了！大家互相照應」`,
+        content_snippet: `${mainLocation}社區Line群組今天特別熱鬧，居民紛紛回報淹水狀況並互相提醒注意安全。有熱心鄰居主動提供接送服務，展現社區互助精神。`,
+        source: '在地社區Line群組',
+        url: 'https://example.com/flood-line',
+        publish_date: new Date(Date.now() - Math.random() * 2 * 24 * 60 * 60 * 1000).toISOString(),
+        content_type: 'Line群組討論'
+      },
+      {
+        title: `${mainLocation}Facebook社團爆料：「排水系統到底什麼時候要修？」`,
+        content_snippet: `${mainLocation}地區Facebook社團出現大量淹水抱怨文，居民質疑排水設施長期未改善，每逢大雨必淹。有網友整理歷年淹水照片對比，引發熱烈討論。`,
+        source: '地區Facebook社團',
+        url: 'https://example.com/flood-fb',
+        publish_date: new Date(Date.now() - Math.random() * 3 * 24 * 60 * 60 * 1000).toISOString(),
+        content_type: 'Facebook社團'
       },
       {
         title: `氣候變遷衝擊 ${mainLocation}淹水頻率增加`,
         content_snippet: `專家指出，極端氣候導致${mainLocation}淹水事件頻率明顯上升，呼籲政府應加強防災準備及基礎設施改善。`,
         source: '環境資訊中心',
-        url: 'https://example.com/flood-2',
-        publish_date: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString()
-      },
-      {
-        title: `${mainLocation}民眾自救！社區組織防汛志工隊`,
-        content_snippet: `${mainLocation}居民因應淹水威脅，自發組織防汛志工隊，進行社區防災演練及緊急應變準備。`,
-        source: '地方新聞台',
-        url: 'https://example.com/flood-3',
-        publish_date: new Date(Date.now() - Math.random() * 14 * 24 * 60 * 60 * 1000).toISOString()
+        url: 'https://example.com/flood-expert',
+        publish_date: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(),
+        content_type: '專家分析'
       },
       {
         title: `${mainLocation}淹水警戒！水利署發布一級警報`,
         content_snippet: `因應持續降雨，水利署針對${mainLocation}地區發布淹水一級警報，呼籲民眾避免前往低窪地區。`,
         source: '水利署',
-        url: 'https://example.com/flood-4',
-        publish_date: new Date(Date.now() - Math.random() * 3 * 24 * 60 * 60 * 1000).toISOString()
+        url: 'https://example.com/flood-alert',
+        publish_date: new Date(Date.now() - Math.random() * 3 * 24 * 60 * 60 * 1000).toISOString(),
+        content_type: '官方警報'
       }
     ];
   }
@@ -245,6 +286,7 @@ function generateMockFloodNews(address: string, searchId: string) {
     source: news.source,
     url: news.url,
     publish_date: news.publish_date,
+    content_type: news.content_type || '一般新聞',
     created_at: new Date().toISOString()
   }));
 }

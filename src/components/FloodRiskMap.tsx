@@ -96,8 +96,14 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
 
       // Clear existing layers and sources
       try {
+        if (map.current.getLayer('search-point-label')) {
+          map.current.removeLayer('search-point-label');
+        }
         if (map.current.getLayer('search-point')) {
           map.current.removeLayer('search-point');
+        }
+        if (map.current.getLayer('search-point-pulse')) {
+          map.current.removeLayer('search-point-pulse');
         }
         if (map.current.getLayer('search-radius')) {
           map.current.removeLayer('search-radius');
@@ -112,7 +118,7 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
         console.log('Error removing existing sources:', error);
       }
 
-      // Add search location marker
+      // Add search location marker with enhanced visibility
       map.current.addSource('search-location', {
         type: 'geojson',
         data: {
@@ -121,19 +127,71 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
             type: 'Point',
             coordinates: [searchLocation.longitude, searchLocation.latitude]
           },
-          properties: {}
+          properties: {
+            name: searchLocation.address
+          }
         }
       });
 
+      // Add pulsing animation layer (background circle)
+      map.current.addLayer({
+        id: 'search-point-pulse',
+        type: 'circle',
+        source: 'search-location',
+        paint: {
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            10, 20,
+            15, 40,
+            20, 80
+          ],
+          'circle-color': 'hsl(0, 70%, 50%)',
+          'circle-opacity': 0.4,
+          'circle-stroke-width': 0
+        }
+      });
+
+      // Add main marker (foreground circle)
       map.current.addLayer({
         id: 'search-point',
         type: 'circle',
         source: 'search-location',
         paint: {
-          'circle-radius': 8,
-          'circle-color': 'hsl(208, 90%, 45%)',
-          'circle-stroke-width': 3,
-          'circle-stroke-color': '#ffffff'
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            10, 10,
+            15, 18,
+            20, 30
+          ],
+          'circle-color': 'hsl(0, 85%, 60%)',
+          'circle-stroke-width': 4,
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-opacity': 0.9
+        }
+      });
+
+      // Add address label
+      map.current.addLayer({
+        id: 'search-point-label',
+        type: 'symbol',
+        source: 'search-location',
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': ['Open Sans Regular'],
+          'text-size': 14,
+          'text-offset': [0, -3],
+          'text-anchor': 'bottom',
+          'text-max-width': 10
+        },
+        paint: {
+          'text-color': 'hsl(0, 0%, 10%)',
+          'text-halo-color': '#ffffff',
+          'text-halo-width': 2,
+          'text-halo-blur': 1
         }
       });
 
