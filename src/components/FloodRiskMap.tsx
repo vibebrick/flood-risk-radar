@@ -91,132 +91,129 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
 
     addSearchLocationToMap();
 
-    function addSearchLocationToMap() {
-      if (!map.current || !searchLocation) return;
-
-      // Clear existing layers and sources
-      try {
-        if (map.current.getLayer('search-point-label')) {
-          map.current.removeLayer('search-point-label');
-        }
-        if (map.current.getLayer('search-point')) {
-          map.current.removeLayer('search-point');
-        }
-        if (map.current.getLayer('search-point-pulse')) {
-          map.current.removeLayer('search-point-pulse');
-        }
-        if (map.current.getLayer('search-radius')) {
-          map.current.removeLayer('search-radius');
-        }
-        if (map.current.getSource('search-location')) {
-          map.current.removeSource('search-location');
-        }
-        if (map.current.getSource('search-radius')) {
-          map.current.removeSource('search-radius');
-        }
-      } catch (error) {
-        console.log('Error removing existing sources:', error);
+    async function addSearchLocationToMap() {
+      if (!map.current || !searchLocation) {
+        console.log('❌ Map or search location not available');
+        return;
       }
 
-      // Add search location marker with enhanced visibility
-      map.current.addSource('search-location', {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
-          geometry: {
-            type: 'Point',
-            coordinates: [searchLocation.longitude, searchLocation.latitude]
-          },
-          properties: {
-            name: searchLocation.address
+      console.log('🗺️ Adding search location to map:', {
+        location: searchLocation,
+        mapLoaded: map.current.isStyleLoaded(),
+        searchRadius
+      });
+
+      // Clear existing layers and sources with improved error handling
+      const layersToRemove = ['search-point-label', 'search-point', 'search-point-pulse', 'search-radius'];
+      const sourcesToRemove = ['search-location', 'search-radius'];
+
+      try {
+        layersToRemove.forEach(layerId => {
+          if (map.current?.getLayer(layerId)) {
+            map.current.removeLayer(layerId);
+            console.log(`✅ Removed layer: ${layerId}`);
           }
-        }
-      });
+        });
 
-      // Add pulsing animation layer (background circle)
-      map.current.addLayer({
-        id: 'search-point-pulse',
-        type: 'circle',
-        source: 'search-location',
-        paint: {
-          'circle-radius': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            10, 20,
-            15, 40,
-            20, 80
-          ],
-          'circle-color': 'hsl(0, 70%, 50%)',
-          'circle-opacity': 0.4,
-          'circle-stroke-width': 0
-        }
-      });
+        sourcesToRemove.forEach(sourceId => {
+          if (map.current?.getSource(sourceId)) {
+            map.current.removeSource(sourceId);
+            console.log(`✅ Removed source: ${sourceId}`);
+          }
+        });
+      } catch (error) {
+        console.log('⚠️ Error removing existing sources:', error);
+      }
 
-      // Add main marker (foreground circle)
-      map.current.addLayer({
-        id: 'search-point',
-        type: 'circle',
-        source: 'search-location',
-        paint: {
-          'circle-radius': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            10, 10,
-            15, 18,
-            20, 30
-          ],
-          'circle-color': 'hsl(0, 85%, 60%)',
-          'circle-stroke-width': 4,
-          'circle-stroke-color': '#ffffff',
-          'circle-stroke-opacity': 0.9
-        }
-      });
+      // Add HTML marker as primary solution with enhanced visibility
+      const markerElement = document.createElement('div');
+      markerElement.style.cssText = `
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: hsl(16, 90%, 55%);
+        border: 4px solid white;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3), 0 0 0 4px hsla(16, 90%, 55%, 0.3);
+        cursor: pointer;
+        position: relative;
+        animation: pulse 2s infinite;
+      `;
 
-      // Add address label
-      map.current.addLayer({
-        id: 'search-point-label',
-        type: 'symbol',
-        source: 'search-location',
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-font': ['Open Sans Regular'],
-          'text-size': 14,
-          'text-offset': [0, -3],
-          'text-anchor': 'bottom',
-          'text-max-width': 10
-        },
-        paint: {
-          'text-color': 'hsl(0, 0%, 10%)',
-          'text-halo-color': '#ffffff',
-          'text-halo-width': 2,
-          'text-halo-blur': 1
+      // Add pulsing animation
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes pulse {
+          0% { box-shadow: 0 4px 12px rgba(0,0,0,0.3), 0 0 0 4px hsla(16, 90%, 55%, 0.3); }
+          50% { box-shadow: 0 4px 12px rgba(0,0,0,0.3), 0 0 0 12px hsla(16, 90%, 55%, 0.1); }
+          100% { box-shadow: 0 4px 12px rgba(0,0,0,0.3), 0 0 0 4px hsla(16, 90%, 55%, 0.3); }
         }
-      });
+      `;
+      document.head.appendChild(style);
 
-      // Add radius circle
-      const radiusInKm = searchRadius / 1000;
-      const radiusCircle = createCircle([searchLocation.longitude, searchLocation.latitude], radiusInKm);
+      // Create and add HTML marker
+      const marker = new maplibregl.Marker({
+        element: markerElement,
+        anchor: 'center'
+      })
+        .setLngLat([searchLocation.longitude, searchLocation.latitude])
+        .addTo(map.current);
+
+      console.log('✅ Added HTML marker at:', [searchLocation.longitude, searchLocation.latitude]);
+
+      // Add address popup
+      const popup = new maplibregl.Popup({
+        offset: 25,
+        closeButton: false,
+        closeOnClick: false
+      }).setHTML(`
+        <div style="
+          padding: 8px 12px;
+          background: white;
+          border-radius: 6px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+          font-size: 12px;
+          max-width: 200px;
+          word-wrap: break-word;
+        ">
+          ${searchLocation.address}
+        </div>
+      `);
+
+      marker.setPopup(popup);
       
-      map.current.addSource('search-radius', {
-        type: 'geojson',
-        data: radiusCircle
-      });
+      // Show popup initially
+      popup.addTo(map.current);
 
-      map.current.addLayer({
-        id: 'search-radius',
-        type: 'fill',
-        source: 'search-radius',
-        paint: {
-          'fill-color': 'hsl(208, 90%, 45%)',
-          'fill-opacity': 0.2
-        }
-      });
+      // Add radius visualization using GeoJSON
+      try {
+        const radiusInKm = searchRadius / 1000;
+        const radiusCircle = createCircle([searchLocation.longitude, searchLocation.latitude], radiusInKm);
+        
+        map.current.addSource('search-radius', {
+          type: 'geojson',
+          data: radiusCircle
+        });
 
-      // Fit map to show the radius with better stability
+        map.current.addLayer({
+          id: 'search-radius',
+          type: 'fill',
+          source: 'search-radius',
+          paint: {
+            'fill-color': 'hsl(208, 90%, 45%)',
+            'fill-opacity': 0.15
+          }
+        });
+
+        console.log('✅ Added search radius circle');
+      } catch (error) {
+        console.error('❌ Error adding radius circle:', error);
+      }
+
+      // Fit map to show the location and radius with improved timing
+      const radiusInKm = searchRadius / 1000;
       const bounds = new maplibregl.LngLatBounds();
-      const buffer = radiusInKm / 111 * 1.2; // Add 20% buffer for better view
+      const buffer = Math.max(radiusInKm / 111 * 1.5, 0.01); // Minimum buffer for visibility
+      
       bounds.extend([
         searchLocation.longitude - buffer,
         searchLocation.latitude - buffer
@@ -226,14 +223,33 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
         searchLocation.latitude + buffer
       ]);
       
-      // Use setTimeout to ensure the layers are fully rendered before fitting bounds
-      setTimeout(() => {
-        map.current?.fitBounds(bounds, { 
-          padding: 80,
-          duration: 1000,
-          essential: true // Prevents other animations from cancelling this one
-        });
-      }, 100);
+      // Multiple attempts to ensure fitBounds works
+      const fitBoundsWithRetry = (attempts = 0) => {
+        if (attempts > 3) {
+          console.log('❌ Failed to fit bounds after multiple attempts');
+          return;
+        }
+
+        try {
+          map.current?.fitBounds(bounds, { 
+            padding: 80,
+            duration: attempts === 0 ? 1000 : 500,
+            essential: true
+          });
+          console.log(`✅ Fitted bounds (attempt ${attempts + 1})`);
+        } catch (error) {
+          console.log(`⚠️ Fit bounds attempt ${attempts + 1} failed:`, error);
+          setTimeout(() => fitBoundsWithRetry(attempts + 1), 200);
+        }
+      };
+
+      // Initial fit attempt
+      setTimeout(() => fitBoundsWithRetry(), 200);
+
+      // Store marker reference for cleanup
+      if (map.current) {
+        (map.current as any)._searchMarker = marker;
+      }
     }
   }, [searchLocation, searchRadius, mapLoaded]);
 
