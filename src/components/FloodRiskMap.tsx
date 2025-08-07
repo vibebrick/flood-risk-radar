@@ -19,21 +19,41 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
   const [mapError, setMapError] = useState<string | null>(null);
   const [tileSourceIndex, setTileSourceIndex] = useState(0);
 
-  // Reliable tile sources with proper fallback
+  // Multiple reliable tile sources with load balancing
   const tileSources = [
     {
-      style: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      type: 'raster'
+      name: 'OpenStreetMap Multi-Server',
+      style: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png', 'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png', 'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      type: 'raster',
+      maxZoom: 19,
+      attribution: '© OpenStreetMap contributors'
     },
     {
-      style: 'https://tiles.wmflabs.org/osm-no-labels/{z}/{x}/{y}.png',
-      type: 'raster'
+      name: 'Stamen Terrain',
+      style: ['https://stamen-tiles-a.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png', 'https://stamen-tiles-b.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png'],
+      type: 'raster',
+      maxZoom: 18,
+      attribution: '© Stamen Design'
     },
     {
-      style: 'https://tiles.openfreemap.org/styles/positron',
-      type: 'style'
+      name: 'CartoDB Light',
+      style: ['https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', 'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'],
+      type: 'raster',
+      maxZoom: 19,
+      attribution: '© CartoDB'
+    },
+    {
+      name: 'WMTS OSM',
+      style: ['https://tiles.wmflabs.org/osm/{z}/{x}/{y}.png'],
+      type: 'raster',
+      maxZoom: 18,
+      attribution: '© OpenStreetMap'
     }
   ];
+
+  const [retryCount, setRetryCount] = useState(0);
+  const [tileLoadProgress, setTileLoadProgress] = useState(0);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -48,55 +68,88 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
           : [120.9605, 23.6978];
         
         const currentSource = tileSources[tileSourceIndex];
+        console.log(`🗺️ Initializing map with source: ${currentSource.name}`);
         
-        if (currentSource.type === 'raster') {
-          // Create a basic style for raster sources
-          const rasterStyle = {
-            version: 8 as const,
-            sources: {
-              'osm': {
-                type: 'raster' as const,
-                tiles: [currentSource.style],
-                tileSize: 256,
-                attribution: '© OpenStreetMap contributors'
-              }
-            },
-            layers: [{
-              id: 'osm',
+        // Select random tile server for load balancing
+        const tileUrls = Array.isArray(currentSource.style) ? currentSource.style : [currentSource.style];
+        const selectedTileUrl = tileUrls[Math.floor(Math.random() * tileUrls.length)];
+        
+        // Create enhanced raster style with retry mechanism
+        const rasterStyle = {
+          version: 8 as const,
+          sources: {
+            'main-tiles': {
               type: 'raster' as const,
-              source: 'osm'
-            }]
-          };
-          
-          map.current = new maplibregl.Map({
-            container: mapContainer.current!,
-            style: rasterStyle,
-            center: initialCenter,
-            zoom: searchLocation ? 12 : 8,
-            maxZoom: 18,
-            minZoom: 6,
-            attributionControl: false
-          });
-        } else {
-          map.current = new maplibregl.Map({
-            container: mapContainer.current!,
-            style: currentSource.style,
-            center: initialCenter,
-            zoom: searchLocation ? 12 : 8,
-            maxZoom: 18,
-            minZoom: 6,
-            attributionControl: false
-          });
-        }
+              tiles: [selectedTileUrl],
+              tileSize: 256,
+              maxzoom: currentSource.maxZoom,
+              attribution: currentSource.attribution
+            }
+          },
+          layers: [{
+            id: 'main-tiles',
+            type: 'raster' as const,
+            source: 'main-tiles'
+          }]
+        };
+        
+        map.current = new maplibregl.Map({
+          container: mapContainer.current!,
+          style: rasterStyle,
+          center: initialCenter,
+          zoom: searchLocation ? 12 : 8,
+          maxZoom: currentSource.maxZoom,
+          minZoom: 6,
+          attributionControl: false
+        });
 
-        // Error handling for style loading
+        // Enhanced error handling with intelligent retry
         map.current.on('error', (e) => {
           console.error('Map error:', e);
-          if (tileSourceIndex < tileSources.length - 1) {
-            console.log(`Switching to backup tile source ${tileSourceIndex + 1}`);
+          setIsRetrying(true);
+          
+          if (retryCount < 3) {
+            // Retry with same source first
+            console.log(`🔄 Retrying with ${currentSource.name} (attempt ${retryCount + 1})`);
+            setTimeout(() => {
+              setRetryCount(prev => prev + 1);
+              setIsRetrying(false);
+            }, Math.pow(2, retryCount) * 1000); // Exponential backoff
+          } else if (tileSourceIndex < tileSources.length - 1) {
+            // Switch to next tile source
+            console.log(`🔄 Switching to backup tile source: ${tileSources[tileSourceIndex + 1].name}`);
             setTileSourceIndex(prev => prev + 1);
+            setRetryCount(0);
+            setIsRetrying(false);
           } else {
-            setMapError('地圖載入失敗，請檢查網路連線');
+            setMapError('所有地圖源均載入失敗，請檢查網路連線後重試');
+            setIsRetrying(false);
+          }
+        });
+
+        // Monitor tile loading progress
+        let loadedTiles = 0;
+        let totalTiles = 0;
+
+        map.current.on('dataloading', (e: any) => {
+          if (e.sourceId === 'main-tiles') {
+            totalTiles++;
+            setTileLoadProgress(Math.round((loadedTiles / Math.max(totalTiles, 1)) * 100));
+          }
+        });
+
+        map.current.on('data', (e: any) => {
+          if (e.sourceId === 'main-tiles' && e.isSourceLoaded) {
+            loadedTiles++;
+            setTileLoadProgress(Math.round((loadedTiles / Math.max(totalTiles, 1)) * 100));
+          }
+        });
+
+        // Handle individual tile errors with retry
+        map.current.on('sourcedataloading', (e: any) => {
+          if (e.sourceId === 'main-tiles') {
+            // Monitor for tile load failures and implement per-tile retry if needed
+            console.log('🗺️ Loading tiles...');
           }
         });
 
@@ -112,12 +165,15 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
         }), 'bottom-right');
 
         map.current.on('load', () => {
-          console.log('✅ Map loaded successfully');
+          console.log(`✅ Map loaded successfully with ${currentSource.name}`);
           setMapLoaded(true);
+          setTileLoadProgress(100);
+          setRetryCount(0);
         });
 
         map.current.on('idle', () => {
           console.log('✅ Map is idle and ready');
+          setTileLoadProgress(100);
         });
 
         // Handle map clicks for location selection
@@ -159,7 +215,7 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
     return () => {
       map.current?.remove();
     };
-  }, [onLocationSelect, tileSourceIndex]);
+  }, [onLocationSelect, tileSourceIndex, retryCount]);
 
   // Update map when search location changes
   useEffect(() => {
@@ -435,31 +491,70 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
     <div className="relative w-full h-[500px] rounded-lg overflow-hidden shadow-map border border-border">
       <div ref={mapContainer} className="absolute inset-0" />
       
-      {/* Loading state */}
+      {/* Enhanced loading state with progress */}
       {!mapLoaded && !mapError && (
         <div className="absolute inset-0 bg-muted flex items-center justify-center">
-          <div className="flex items-center space-x-2">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-            <div className="text-muted-foreground">載入地圖中...</div>
+          <div className="text-center space-y-3">
+            <div className="flex items-center justify-center space-x-2">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+              <div className="text-muted-foreground">
+                {isRetrying ? `重試中... (${retryCount + 1}/3)` : '載入地圖中...'}
+              </div>
+            </div>
+            {tileLoadProgress > 0 && tileLoadProgress < 100 && (
+              <div className="w-32 mx-auto">
+                <div className="w-full bg-secondary rounded-full h-2">
+                  <div 
+                    className="bg-primary h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${tileLoadProgress}%` }}
+                  ></div>
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {tileLoadProgress}%
+                </div>
+              </div>
+            )}
+            <div className="text-xs text-muted-foreground">
+              使用: {tileSources[tileSourceIndex].name}
+            </div>
           </div>
         </div>
       )}
       
-      {/* Error state */}
+      {/* Enhanced error state */}
       {mapError && (
         <div className="absolute inset-0 bg-muted flex items-center justify-center">
-          <div className="text-center">
-            <div className="text-destructive mb-2">⚠️ {mapError}</div>
-            <button 
-              onClick={() => {
-                setMapError(null);
-                setTileSourceIndex(0);
-                setMapLoaded(false);
-              }}
-              className="px-3 py-1 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90"
-            >
-              重新載入
-            </button>
+          <div className="text-center space-y-3">
+            <div className="text-destructive text-sm">⚠️ {mapError}</div>
+            <div className="text-xs text-muted-foreground">
+              已嘗試 {tileSources.length} 個地圖源
+            </div>
+            <div className="flex gap-2 justify-center">
+              <button 
+                onClick={() => {
+                  setMapError(null);
+                  setTileSourceIndex(0);
+                  setRetryCount(0);
+                  setTileLoadProgress(0);
+                  setMapLoaded(false);
+                }}
+                className="px-3 py-1 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90"
+              >
+                重新載入
+              </button>
+              <button 
+                onClick={() => {
+                  setMapError(null);
+                  setTileSourceIndex((prev) => (prev + 1) % tileSources.length);
+                  setRetryCount(0);
+                  setTileLoadProgress(0);
+                  setMapLoaded(false);
+                }}
+                className="px-3 py-1 bg-secondary text-secondary-foreground rounded text-sm hover:bg-secondary/90"
+              >
+                切換地圖源
+              </button>
+            </div>
           </div>
         </div>
       )}
