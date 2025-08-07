@@ -3,7 +3,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
-import { Search, MapPin, Loader2 } from 'lucide-react';
+import { Search, MapPin, Loader2, AlertCircle } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { searchLocation, getSuggestions } from '@/utils/geocoding';
 
 interface SearchFormProps {
   onSearch: (location: { latitude: number; longitude: number; address: string }, radius: number) => void;
@@ -15,6 +17,8 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isSearching = 
   const [selectedRadius, setSelectedRadius] = useState(500);
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [error, setError] = useState<string>('');
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
 
   const radiusOptions = [
     { value: 300, label: '300公尺' },
@@ -25,44 +29,41 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isSearching = 
   const handleSearch = async (searchQuery = query) => {
     if (!searchQuery.trim()) return;
 
+    setError('');
+    
     try {
-      // Use Nominatim for geocoding
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&countrycodes=tw&limit=1&accept-language=zh-TW,zh,en`
-      );
-      const data = await response.json();
-
-      if (data && data.length > 0) {
-        const result = data[0];
+      const { results } = await searchLocation(searchQuery);
+      
+      if (results.length > 0) {
+        const result = results[0];
         onSearch({
-          latitude: parseFloat(result.lat),
-          longitude: parseFloat(result.lon),
-          address: result.display_name
+          latitude: result.latitude,
+          longitude: result.longitude,
+          address: result.address
         }, selectedRadius);
         setShowSuggestions(false);
-      } else {
-        alert('找不到該地址，請嘗試其他關鍵字');
       }
     } catch (error) {
       console.error('Search error:', error);
-      alert('搜尋時發生錯誤，請稍後再試');
+      setError(error instanceof Error ? error.message : '搜尋時發生未知錯誤');
     }
   };
 
   const handleInputChange = async (value: string) => {
     setQuery(value);
+    setError(''); // Clear error when user types
     
     if (value.length > 2) {
+      setIsLoadingSuggestions(true);
       try {
-        // Get suggestions from Nominatim
-        const response = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(value)}&countrycodes=tw&limit=5&accept-language=zh-TW,zh,en`
-        );
-        const data = await response.json();
-        setSuggestions(data);
+        const { suggestions: newSuggestions } = await getSuggestions(value);
+        setSuggestions(newSuggestions);
         setShowSuggestions(true);
       } catch (error) {
         console.error('Error fetching suggestions:', error);
+        setShowSuggestions(false);
+      } finally {
+        setIsLoadingSuggestions(false);
       }
     } else {
       setShowSuggestions(false);
@@ -70,18 +71,26 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isSearching = 
   };
 
   const handleSuggestionClick = (suggestion: any) => {
-    setQuery(suggestion.display_name);
+    setQuery(suggestion.address);
     setShowSuggestions(false);
+    setError('');
     onSearch({
-      latitude: parseFloat(suggestion.lat),
-      longitude: parseFloat(suggestion.lon),
-      address: suggestion.display_name
+      latitude: suggestion.latitude,
+      longitude: suggestion.longitude,
+      address: suggestion.address
     }, selectedRadius);
   };
 
   return (
     <Card className="p-6 shadow-card">
       <div className="space-y-4">
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">
             搜尋建物名稱或地址
@@ -96,6 +105,9 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isSearching = 
               className="pl-10"
             />
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            {isLoadingSuggestions && (
+              <Loader2 className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+            )}
             
             {showSuggestions && suggestions.length > 0 && (
               <Card className="absolute z-10 w-full mt-1 max-h-60 overflow-y-auto shadow-lg">
@@ -107,7 +119,7 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isSearching = 
                   >
                     <div className="flex items-start gap-2">
                       <MapPin className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
-                      <span className="text-sm">{suggestion.display_name}</span>
+                      <span className="text-sm">{suggestion.address}</span>
                     </div>
                   </div>
                 ))}
