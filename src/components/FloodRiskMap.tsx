@@ -19,11 +19,20 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
   const [mapError, setMapError] = useState<string | null>(null);
   const [tileSourceIndex, setTileSourceIndex] = useState(0);
 
-  // Multiple tile sources for redundancy
+  // Reliable tile sources with proper fallback
   const tileSources = [
-    'https://tiles.openfreemap.org/styles/positron',
-    'https://tiles.openfreemap.org/styles/bright',
-    'https://demotiles.maplibre.org/style.json'
+    {
+      style: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      type: 'raster'
+    },
+    {
+      style: 'https://tiles.wmflabs.org/osm-no-labels/{z}/{x}/{y}.png',
+      type: 'raster'
+    },
+    {
+      style: 'https://tiles.openfreemap.org/styles/positron',
+      type: 'style'
+    }
   ];
 
   useEffect(() => {
@@ -38,15 +47,47 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
           ? [searchLocation.longitude, searchLocation.latitude]
           : [120.9605, 23.6978];
         
-        map.current = new maplibregl.Map({
-          container: mapContainer.current!,
-          style: tileSources[tileSourceIndex],
-          center: initialCenter,
-          zoom: searchLocation ? 12 : 8,
-          maxZoom: 18,
-          minZoom: 6,
-          attributionControl: false
-        });
+        const currentSource = tileSources[tileSourceIndex];
+        
+        if (currentSource.type === 'raster') {
+          // Create a basic style for raster sources
+          const rasterStyle = {
+            version: 8 as const,
+            sources: {
+              'osm': {
+                type: 'raster' as const,
+                tiles: [currentSource.style],
+                tileSize: 256,
+                attribution: '© OpenStreetMap contributors'
+              }
+            },
+            layers: [{
+              id: 'osm',
+              type: 'raster' as const,
+              source: 'osm'
+            }]
+          };
+          
+          map.current = new maplibregl.Map({
+            container: mapContainer.current!,
+            style: rasterStyle,
+            center: initialCenter,
+            zoom: searchLocation ? 12 : 8,
+            maxZoom: 18,
+            minZoom: 6,
+            attributionControl: false
+          });
+        } else {
+          map.current = new maplibregl.Map({
+            container: mapContainer.current!,
+            style: currentSource.style,
+            center: initialCenter,
+            zoom: searchLocation ? 12 : 8,
+            maxZoom: 18,
+            minZoom: 6,
+            attributionControl: false
+          });
+        }
 
         // Error handling for style loading
         map.current.on('error', (e) => {
@@ -238,26 +279,26 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
           data: radiusCircle
         });
 
-        // Add fill layer for radius area
+        // Add fill layer for radius area with enhanced visibility
         map.current.addLayer({
           id: 'search-radius-fill',
           type: 'fill',
           source: 'search-radius',
           paint: {
-            'fill-color': 'hsl(208, 70%, 50%)',
-            'fill-opacity': 0.2
+            'fill-color': 'hsl(208, 80%, 50%)',
+            'fill-opacity': 0.35
           }
         });
 
-        // Add border layer for radius circle
+        // Add border layer for radius circle with increased visibility
         map.current.addLayer({
           id: 'search-radius-border',
           type: 'line',
           source: 'search-radius',
           paint: {
-            'line-color': 'hsl(16, 90%, 55%)',
-            'line-width': 3,
-            'line-opacity': 0.8
+            'line-color': 'hsl(16, 95%, 50%)',
+            'line-width': 4,
+            'line-opacity': 0.9
           }
         });
 
@@ -305,16 +346,18 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
       const radiusInKm = searchRadius / 1000;
       const bounds = new maplibregl.LngLatBounds();
       
-      // Dynamic buffer calculation based on radius size
+          // Enhanced dynamic buffer calculation based on radius size
       let buffer;
-      if (radiusInKm <= 0.5) {
-        buffer = radiusInKm / 111 * 3; // More zoom for small radius
-      } else if (radiusInKm <= 1) {
-        buffer = radiusInKm / 111 * 2.5;
+      if (radiusInKm <= 0.3) {
+        buffer = radiusInKm / 111 * 4; // Maximum zoom for 300m
+      } else if (radiusInKm <= 0.5) {
+        buffer = radiusInKm / 111 * 3.5; // High zoom for 500m
+      } else if (radiusInKm <= 0.8) {
+        buffer = radiusInKm / 111 * 3; // Medium zoom for 800m
       } else {
-        buffer = radiusInKm / 111 * 2; // Standard zoom for larger radius
+        buffer = radiusInKm / 111 * 2.5; // Standard zoom for larger radius
       }
-      buffer = Math.max(buffer, 0.005); // Minimum buffer
+      buffer = Math.max(buffer, 0.003); // Minimum buffer
       
       bounds.extend([
         searchLocation.longitude - buffer,
@@ -333,14 +376,19 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
         }
 
         try {
-          // Dynamic padding based on radius
-          const padding = Math.min(Math.max(40, radiusInKm * 10), 120);
+          // Enhanced dynamic padding and zoom based on radius
+          const padding = Math.min(Math.max(30, radiusInKm * 8), 100);
+          let maxZoom;
+          if (radiusInKm <= 0.3) maxZoom = 16;
+          else if (radiusInKm <= 0.5) maxZoom = 15;
+          else if (radiusInKm <= 0.8) maxZoom = 14;
+          else maxZoom = 13;
           
           map.current?.fitBounds(bounds, { 
             padding: padding,
-            duration: attempts === 0 ? 1000 : 500,
+            duration: attempts === 0 ? 1200 : 600,
             essential: true,
-            maxZoom: radiusInKm <= 0.3 ? 16 : radiusInKm <= 0.8 ? 14 : 12
+            maxZoom: maxZoom
           });
           console.log(`✅ Fitted bounds (attempt ${attempts + 1}) with radius ${searchRadius}m`);
         } catch (error) {
