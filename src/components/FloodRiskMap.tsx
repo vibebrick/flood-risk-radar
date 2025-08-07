@@ -21,11 +21,16 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
     if (!mapContainer.current) return;
 
     // Initialize MapLibre GL JS with OpenFreeMap
+    // Use search location if available, otherwise default to Taiwan center
+    const initialCenter: [number, number] = searchLocation 
+      ? [searchLocation.longitude, searchLocation.latitude]
+      : [120.9605, 23.6978]; // Taiwan center instead of Taipei
+    
     map.current = new maplibregl.Map({
       container: mapContainer.current,
       style: 'https://tiles.openfreemap.org/styles/positron', // Light style
-      center: [121.5654, 25.0330], // Taipei, Taiwan
-      zoom: 10,
+      center: initialCenter,
+      zoom: searchLocation ? 12 : 8, // Closer zoom if we have a search location
     });
 
     // Add navigation controls
@@ -151,18 +156,26 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
         }
       });
 
-      // Fit map to show the radius
+      // Fit map to show the radius with better stability
       const bounds = new maplibregl.LngLatBounds();
+      const buffer = radiusInKm / 111 * 1.2; // Add 20% buffer for better view
       bounds.extend([
-        searchLocation.longitude - radiusInKm / 111,
-        searchLocation.latitude - radiusInKm / 111
+        searchLocation.longitude - buffer,
+        searchLocation.latitude - buffer
       ]);
       bounds.extend([
-        searchLocation.longitude + radiusInKm / 111,
-        searchLocation.latitude + radiusInKm / 111
+        searchLocation.longitude + buffer,
+        searchLocation.latitude + buffer
       ]);
       
-      map.current.fitBounds(bounds, { padding: 50 });
+      // Use setTimeout to ensure the layers are fully rendered before fitting bounds
+      setTimeout(() => {
+        map.current?.fitBounds(bounds, { 
+          padding: 80,
+          duration: 1000,
+          essential: true // Prevents other animations from cancelling this one
+        });
+      }, 100);
     }
   }, [searchLocation, searchRadius, mapLoaded]);
 
