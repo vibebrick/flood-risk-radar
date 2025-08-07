@@ -217,20 +217,67 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
     };
   }, [onLocationSelect, tileSourceIndex, retryCount]);
 
+  // Enhanced search location marker management with loading checks
+  const [markerRef, setMarkerRef] = useState<maplibregl.Marker | null>(null);
+  const [markerAddAttempts, setMarkerAddAttempts] = useState(0);
+  
   // Update map when search location changes
   useEffect(() => {
-    if (!map.current || !mapLoaded || !searchLocation) return;
+    if (!map.current || !searchLocation) return;
 
-    // Ensure style is loaded before adding sources
-    if (!map.current.isStyleLoaded()) {
-      // Wait for style to load if not ready
-      map.current.once('style.load', () => {
-        addSearchLocationToMap();
-      });
-      return;
+    // Clean up previous marker
+    if (markerRef) {
+      markerRef.remove();
+      setMarkerRef(null);
     }
 
-    addSearchLocationToMap();
+    console.log('🗺️ Search location changed, adding marker:', searchLocation);
+
+    // Enhanced loading check with multiple validation points
+    const addMarkerWhenReady = () => {
+      if (!map.current || !searchLocation) {
+        console.log('❌ Map or search location not available');
+        return;
+      }
+
+      const isMapReady = map.current.isStyleLoaded() && mapLoaded;
+      console.log('🔍 Map readiness check:', {
+        isStyleLoaded: map.current.isStyleLoaded(),
+        mapLoaded,
+        isMapReady,
+        attempts: markerAddAttempts
+      });
+
+      if (isMapReady) {
+        addSearchLocationToMap();
+      } else if (markerAddAttempts < 5) {
+        console.log(`⏳ Map not ready, retrying in ${Math.pow(2, markerAddAttempts) * 100}ms (attempt ${markerAddAttempts + 1})`);
+        setMarkerAddAttempts(prev => prev + 1);
+        setTimeout(addMarkerWhenReady, Math.pow(2, markerAddAttempts) * 100);
+      } else {
+        console.error('❌ Failed to add marker after maximum attempts');
+      }
+    };
+
+    // Reset attempt counter and start the process
+    setMarkerAddAttempts(0);
+    
+    // If map is already ready, add immediately; otherwise wait
+    if (map.current.isStyleLoaded() && mapLoaded) {
+      addSearchLocationToMap();
+    } else {
+      // Listen for both style load and map load events
+      const onStyleLoad = () => {
+        console.log('✅ Style loaded, attempting to add marker');
+        addMarkerWhenReady();
+      };
+      
+      map.current.once('style.load', onStyleLoad);
+      map.current.once('idle', onStyleLoad);
+      
+      // Also try after a short delay as fallback
+      setTimeout(addMarkerWhenReady, 500);
+    }
 
     async function addSearchLocationToMap() {
       if (!map.current || !searchLocation) {
@@ -241,8 +288,17 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
       console.log('🗺️ Adding search location to map:', {
         location: searchLocation,
         mapLoaded: map.current.isStyleLoaded(),
-        searchRadius
+        searchRadius,
+        mapCenter: map.current.getCenter(),
+        mapZoom: map.current.getZoom()
       });
+
+      // Enhanced cleanup of existing marker and layers
+      if (markerRef) {
+        markerRef.remove();
+        setMarkerRef(null);
+        console.log('✅ Removed previous marker');
+      }
 
       // Clear existing layers and sources with improved error handling
       const layersToRemove = ['search-point-label', 'search-point', 'search-point-pulse', 'search-radius-fill', 'search-radius-border', 'radius-label'];
@@ -266,40 +322,81 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
         console.log('⚠️ Error removing existing sources:', error);
       }
 
-      // Add HTML marker as primary solution with enhanced visibility
+      // Create enhanced HTML marker with maximum visibility
       const markerElement = document.createElement('div');
+      markerElement.className = 'search-location-marker';
       markerElement.style.cssText = `
-        width: 30px;
-        height: 30px;
+        width: 40px;
+        height: 40px;
         border-radius: 50%;
         background: hsl(16, 90%, 55%);
-        border: 4px solid white;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3), 0 0 0 4px hsla(16, 90%, 55%, 0.3);
+        border: 5px solid white;
+        box-shadow: 
+          0 6px 16px rgba(0,0,0,0.4), 
+          0 0 0 6px hsla(16, 90%, 55%, 0.4),
+          inset 0 2px 4px rgba(255,255,255,0.3);
         cursor: pointer;
         position: relative;
-        animation: pulse 2s infinite;
+        z-index: 1000;
+        animation: searchPulse 2s infinite;
+        transform: translate(-50%, -50%);
       `;
 
-      // Add pulsing animation
+      // Enhanced animation with unique name to avoid conflicts
+      const animationId = 'search-marker-' + Date.now();
       const style = document.createElement('style');
+      style.id = animationId;
       style.textContent = `
-        @keyframes pulse {
-          0% { box-shadow: 0 4px 12px rgba(0,0,0,0.3), 0 0 0 4px hsla(16, 90%, 55%, 0.3); }
-          50% { box-shadow: 0 4px 12px rgba(0,0,0,0.3), 0 0 0 12px hsla(16, 90%, 55%, 0.1); }
-          100% { box-shadow: 0 4px 12px rgba(0,0,0,0.3), 0 0 0 4px hsla(16, 90%, 55%, 0.3); }
+        @keyframes searchPulse {
+          0% { 
+            box-shadow: 
+              0 6px 16px rgba(0,0,0,0.4), 
+              0 0 0 6px hsla(16, 90%, 55%, 0.4),
+              inset 0 2px 4px rgba(255,255,255,0.3);
+            transform: translate(-50%, -50%) scale(1);
+          }
+          50% { 
+            box-shadow: 
+              0 6px 16px rgba(0,0,0,0.4), 
+              0 0 0 20px hsla(16, 90%, 55%, 0.1),
+              inset 0 2px 4px rgba(255,255,255,0.3);
+            transform: translate(-50%, -50%) scale(1.1);
+          }
+          100% { 
+            box-shadow: 
+              0 6px 16px rgba(0,0,0,0.4), 
+              0 0 0 6px hsla(16, 90%, 55%, 0.4),
+              inset 0 2px 4px rgba(255,255,255,0.3);
+            transform: translate(-50%, -50%) scale(1);
+          }
+        }
+        .search-location-marker {
+          animation: searchPulse 2s infinite;
         }
       `;
+      
+      // Remove any existing animation styles
+      const existingStyles = document.querySelectorAll('style[id^="search-marker-"]');
+      existingStyles.forEach(s => s.remove());
       document.head.appendChild(style);
 
-      // Create and add HTML marker
+      // Create and add HTML marker with enhanced positioning
       const marker = new maplibregl.Marker({
         element: markerElement,
-        anchor: 'center'
+        anchor: 'center',
+        offset: [0, 0]
       })
         .setLngLat([searchLocation.longitude, searchLocation.latitude])
         .addTo(map.current);
 
-      console.log('✅ Added HTML marker at:', [searchLocation.longitude, searchLocation.latitude]);
+      // Store marker reference for proper cleanup
+      setMarkerRef(marker);
+
+      console.log('✅ Enhanced marker added successfully at:', {
+        coordinates: [searchLocation.longitude, searchLocation.latitude],
+        element: markerElement,
+        visible: markerElement.offsetParent !== null
+      });
 
       // Add address popup
       const popup = new maplibregl.Popup({
@@ -456,12 +553,17 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
       // Initial fit attempt
       setTimeout(() => fitBoundsWithRetry(), 200);
 
-      // Store marker reference for cleanup
-      if (map.current) {
-        (map.current as any)._searchMarker = marker;
-      }
+      // Verify marker is visible after adding
+      setTimeout(() => {
+        if (markerElement.offsetParent === null) {
+          console.warn('⚠️ Marker may not be visible, attempting to force display');
+          markerElement.style.display = 'block';
+          markerElement.style.position = 'absolute';
+          markerElement.style.zIndex = '1000';
+        }
+      }, 100);
     }
-  }, [searchLocation, searchRadius, mapLoaded]);
+  }, [searchLocation, searchRadius, mapLoaded, markerRef]);
 
   // Function to create a circle polygon
   const createCircle = (center: [number, number], radiusInKm: number, points = 64) => {
