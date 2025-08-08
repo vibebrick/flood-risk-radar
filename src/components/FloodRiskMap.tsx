@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { Button } from '@/components/ui/button';
 
 interface FloodRiskMapProps {
   searchLocation?: { latitude: number; longitude: number; address: string };
@@ -21,6 +22,53 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
   const [mapError, setMapError] = useState<string | null>(null);
   const [tileSourceIndex, setTileSourceIndex] = useState(0);
   const popupRef = useRef<maplibregl.Popup | null>(null);
+  const pinMarkerRef = useRef<maplibregl.Marker | null>(null);
+
+  // Helper: reverse geocode and trigger selection
+  const pickLocation = async (lng: number, lat: number) => {
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=zh-TW,zh,en`
+      );
+      const data = await response.json();
+      const address = data.display_name || `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      onLocationSelect?.({ latitude: lat, longitude: lng, address });
+    } catch (error) {
+      console.error('Error reverse geocoding:', error);
+      onLocationSelect?.({
+        latitude: lat,
+        longitude: lng,
+        address: `${lat.toFixed(6)}, ${lng.toFixed(6)}`
+      });
+    }
+  };
+
+  // Helper: create or move a draggable pin marker
+  const createOrMovePin = (lng: number, lat: number) => {
+    if (!map.current) return;
+
+    if (!pinMarkerRef.current) {
+      const el = document.createElement('div');
+      el.className = 'size-4 rounded-full border border-border shadow-card bg-destructive';
+      const marker = new maplibregl.Marker({ element: el, draggable: true, anchor: 'center' })
+        .setLngLat([lng, lat])
+        .addTo(map.current);
+      marker.on('dragend', () => {
+        const pos = marker.getLngLat();
+        pickLocation(pos.lng, pos.lat);
+      });
+      pinMarkerRef.current = marker;
+    } else {
+      pinMarkerRef.current.setLngLat([lng, lat]);
+    }
+  };
+
+  const clearPin = () => {
+    if (pinMarkerRef.current) {
+      pinMarkerRef.current.remove();
+      pinMarkerRef.current = null;
+    }
+  };
 
   // Multiple reliable tile sources with load balancing
   const tileSources = [
@@ -232,28 +280,7 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
         // Handle map clicks for location selection
         map.current.on('click', async (e) => {
           const { lng, lat } = e.lngLat;
-          
-          try {
-            const response = await fetch(
-              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=zh-TW,zh,en`
-            );
-            const data = await response.json();
-            
-            const address = data.display_name || `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-            
-            onLocationSelect?.({
-              latitude: lat,
-              longitude: lng,
-              address: address
-            });
-          } catch (error) {
-            console.error('Error reverse geocoding:', error);
-            onLocationSelect?.({
-              latitude: lat,
-              longitude: lng,
-              address: `${lat.toFixed(6)}, ${lng.toFixed(6)}`
-            });
-          }
+          pickLocation(lng, lat);
         });
 
       } catch (error) {
@@ -363,6 +390,12 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
     hotspots.setData({ type: 'FeatureCollection', features } as any);
   }, [heatmapPoints, mapLoaded]);
 
+  // Sync pin position when external search location changes (if pin exists)
+  useEffect(() => {
+    if (!searchLocation || !pinMarkerRef.current) return;
+    pinMarkerRef.current.setLngLat([searchLocation.longitude, searchLocation.latitude]);
+  }, [searchLocation]);
+
   // Function to create a circle polygon
   const createCircle = (center: [number, number], radiusInKm: number, points = 64) => {
     const coords = [];
@@ -423,10 +456,37 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
         </div>
       )}
       
-      {/* Radius indicator in top-left */}
-      {mapLoaded && searchLocation && (
-        <div className="absolute top-2 left-2 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 text-sm font-medium border border-border/50">
-          搜尋半徑: {searchRadius}m
+      {/* Controls: top-left */}
+      {mapLoaded && (
+        <div className="absolute top-2 left-2 z-20 space-y-2">
+          <div className="bg-card/95 backdrop-blur-sm rounded-lg px-3 py-2 text-sm font-medium border border-border shadow-card">
+            {searchLocation ? `搜尋半徑: ${searchRadius}m` : '圖釘工具'}
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="map"
+              size="sm"
+              aria-label="釘選地圖中心"
+              title="釘選地圖中心"
+              onClick={() => {
+                if (!map.current) return;
+                const center = map.current.getCenter();
+                createOrMovePin(center.lng, center.lat);
+                pickLocation(center.lng, center.lat);
+              }}
+            >
+              釘選地圖中心
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="清除圖釘"
+              title="清除圖釘"
+              onClick={clearPin}
+            >
+              清除圖釘
+            </Button>
+          </div>
         </div>
       )}
     </div>

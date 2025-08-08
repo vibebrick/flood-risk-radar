@@ -164,7 +164,7 @@ const Index = () => {
               />
               <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
                 <Info className="h-3 w-3" />
-                點擊地圖任意位置開始搜尋該地點的淹水風險資訊
+                點擊地圖或使用上方圖釘工具，選擇位置後開始搜尋該地點的淹水風險資訊
               </p>
             </Card>
 
