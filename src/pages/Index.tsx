@@ -54,7 +54,11 @@ const Index = () => {
       if (error) throw error;
 
       if (data.success) {
-        setNews(data.news);
+        setNews((data.news || []).slice().sort((a: any, b: any) => {
+          const da = a?.publish_date ? new Date(a.publish_date as string).getTime() : 0;
+          const db = b?.publish_date ? new Date(b.publish_date as string).getTime() : 0;
+          return db - da;
+        }));
         
         // Get updated search stats for current location
         const { data: searchData, error: searchError } = await supabase

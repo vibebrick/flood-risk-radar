@@ -18,6 +18,7 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [tileSourceIndex, setTileSourceIndex] = useState(0);
+  const popupRef = useRef<maplibregl.Popup | null>(null);
 
   // Multiple reliable tile sources with load balancing
   const tileSources = [
@@ -119,6 +120,61 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
 
         map.current.on('load', () => {
           console.log(`✅ Map loaded successfully with ${currentSource.name}`);
+          // Add persistent sources and layers once
+          if (!map.current?.getSource('search-point')) {
+            map.current?.addSource('search-point', {
+              type: 'geojson',
+              data: { type: 'FeatureCollection', features: [] }
+            });
+          }
+
+          if (!map.current?.getLayer('search-point-circle')) {
+            map.current?.addLayer({
+              id: 'search-point-circle',
+              type: 'circle',
+              source: 'search-point',
+              paint: {
+                'circle-radius': 6,
+                'circle-color': 'hsl(16, 90%, 55%)',
+                'circle-stroke-color': '#ffffff',
+                'circle-stroke-width': 2,
+                'circle-opacity': 0.95
+              }
+            });
+          }
+
+          if (!map.current?.getSource('search-radius')) {
+            map.current?.addSource('search-radius', {
+              type: 'geojson',
+              data: { type: 'FeatureCollection', features: [] }
+            });
+          }
+
+          if (!map.current?.getLayer('search-radius-fill')) {
+            map.current?.addLayer({
+              id: 'search-radius-fill',
+              type: 'fill',
+              source: 'search-radius',
+              paint: {
+                'fill-color': 'hsl(208, 80%, 50%)',
+                'fill-opacity': 0.2
+              }
+            });
+          }
+
+          if (!map.current?.getLayer('search-radius-border')) {
+            map.current?.addLayer({
+              id: 'search-radius-border',
+              type: 'line',
+              source: 'search-radius',
+              paint: {
+                'line-color': 'hsl(16, 90%, 50%)',
+                'line-width': 2,
+                'line-opacity': 0.8
+              }
+            });
+          }
+
           setMapLoaded(true);
         });
 
@@ -165,140 +221,79 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
     };
   }, [onLocationSelect, tileSourceIndex]);
 
-  // Simplified marker management
-  const [markerRef, setMarkerRef] = useState<maplibregl.Marker | null>(null);
-  
-  // Update map when search location changes
+  // Update map when search location or radius changes using persistent sources
   useEffect(() => {
-    if (!map.current || !searchLocation || !mapLoaded) return;
+    if (!map.current || !mapLoaded) return;
 
-    // Clean up previous marker
-    if (markerRef) {
-      markerRef.remove();
-      setMarkerRef(null);
+    const pointSource = map.current.getSource('search-point') as maplibregl.GeoJSONSource | undefined;
+    const radiusSource = map.current.getSource('search-radius') as maplibregl.GeoJSONSource | undefined;
+
+    if (!pointSource || !radiusSource) return;
+
+    if (!searchLocation) {
+      // Clear sources and popup when no location
+      pointSource.setData({ type: 'FeatureCollection', features: [] } as any);
+      radiusSource.setData({ type: 'FeatureCollection', features: [] } as any);
+      if (popupRef.current) {
+        popupRef.current.remove();
+        popupRef.current = null;
+      }
+      return;
     }
 
-    console.log('🗺️ Adding marker for:', searchLocation);
-    
-    // Wait for map to be ready then add marker
-    const addMarker = () => {
-      if (map.current?.isStyleLoaded()) {
-        addSearchLocationToMap();
-      } else {
-        setTimeout(addMarker, 100);
-      }
+    // Update point feature
+    const pointFeature: GeoJSON.Feature<GeoJSON.Point> = {
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: [searchLocation.longitude, searchLocation.latitude]
+      },
+      properties: {}
+    };
+    pointSource.setData(pointFeature as any);
+
+    // Update radius polygon
+    const radiusInKm = searchRadius / 1000;
+    const radiusCircle = createCircle([searchLocation.longitude, searchLocation.latitude], radiusInKm);
+    radiusSource.setData(radiusCircle as any);
+
+    // Stable popup (single instance)
+    if (!popupRef.current) {
+      popupRef.current = new maplibregl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        offset: 12
+      });
+    }
+    popupRef.current
+      .setLngLat([searchLocation.longitude, searchLocation.latitude])
+      .setHTML(`<div style="padding:8px;font-size:12px;max-width:220px;">${searchLocation.address}</div>`) 
+      .addTo(map.current);
+
+    // Fit bounds after the style becomes idle to avoid flicker
+    const bounds = new maplibregl.LngLatBounds();
+    const buffer = radiusInKm / 111 * 2;
+    bounds.extend([
+      searchLocation.longitude - buffer,
+      searchLocation.latitude - buffer
+    ]);
+    bounds.extend([
+      searchLocation.longitude + buffer,
+      searchLocation.latitude + buffer
+    ]);
+
+    const fit = () => {
+      map.current?.fitBounds(bounds, {
+        padding: 50,
+        duration: 700,
+        maxZoom: 14
+      });
     };
 
-    addMarker();
-
-    function addSearchLocationToMap() {
-      if (!map.current || !searchLocation) return;
-
-      console.log('🗺️ Adding marker and radius for:', searchLocation);
-
-      // Clean up existing layers
-      const layersToRemove = ['search-radius-fill', 'search-radius-border', 'radius-label'];
-      const sourcesToRemove = ['search-radius', 'radius-label'];
-
-      layersToRemove.forEach(layerId => {
-        if (map.current?.getLayer(layerId)) {
-          map.current.removeLayer(layerId);
-        }
-      });
-
-      sourcesToRemove.forEach(sourceId => {
-        if (map.current?.getSource(sourceId)) {
-          map.current.removeSource(sourceId);
-        }
-      });
-
-      // Create simple, stable marker
-      const markerElement = document.createElement('div');
-      markerElement.style.cssText = `
-        width: 24px;
-        height: 24px;
-        border-radius: 50%;
-        background: hsl(16, 90%, 55%);
-        border: 3px solid white;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        cursor: pointer;
-        z-index: 1000;
-      `;
-
-      // Create marker
-      const marker = new maplibregl.Marker({
-        element: markerElement,
-        anchor: 'center'
-      })
-        .setLngLat([searchLocation.longitude, searchLocation.latitude])
-        .addTo(map.current);
-
-      setMarkerRef(marker);
-
-      // Add popup
-      const popup = new maplibregl.Popup({
-        offset: 15,
-        closeButton: false
-      }).setHTML(`
-        <div style="padding: 8px; font-size: 12px; max-width: 200px;">
-          ${searchLocation.address}
-        </div>
-      `);
-
-      marker.setPopup(popup);
-
-      // Add radius circle
-      const radiusInKm = searchRadius / 1000;
-      const radiusCircle = createCircle([searchLocation.longitude, searchLocation.latitude], radiusInKm);
-      
-      map.current.addSource('search-radius', {
-        type: 'geojson',
-        data: radiusCircle
-      });
-
-      map.current.addLayer({
-        id: 'search-radius-fill',
-        type: 'fill',
-        source: 'search-radius',
-        paint: {
-          'fill-color': 'hsl(208, 80%, 50%)',
-          'fill-opacity': 0.2
-        }
-      });
-
-      map.current.addLayer({
-        id: 'search-radius-border',
-        type: 'line',
-        source: 'search-radius',
-        paint: {
-          'line-color': 'hsl(16, 90%, 50%)',
-          'line-width': 2,
-          'line-opacity': 0.8
-        }
-      });
-
-      console.log('✅ Added marker and radius');
-
-      // Fit map bounds
-      const bounds = new maplibregl.LngLatBounds();
-      const buffer = radiusInKm / 111 * 2;
-      
-      bounds.extend([
-        searchLocation.longitude - buffer,
-        searchLocation.latitude - buffer
-      ]);
-      bounds.extend([
-        searchLocation.longitude + buffer,
-        searchLocation.latitude + buffer
-      ]);
-      
-      setTimeout(() => {
-        map.current?.fitBounds(bounds, { 
-          padding: 50,
-          duration: 800,
-          maxZoom: 14
-        });
-      }, 100);
+    if (map.current.isMoving()) {
+      map.current.once('idle', fit);
+    } else {
+      fit();
     }
   }, [searchLocation, searchRadius, mapLoaded]);
 
