@@ -2,7 +2,7 @@
 
 一個以 React/Vite/Tailwind 建置、使用 Supabase 作為後端與資料庫的開源專案。協助使用者評估地點（如購屋地點）的淹水風險，並提供相關新聞與地圖視覺化。
 
-- 線上預覽（Lovable 專案頁）: https://lovable.dev/projects/a3bd2c53-f98b-489d-ba04-254d43c53d94
+
 - 前端：React + Vite + TypeScript + shadcn-ui + Tailwind CSS
 - 後端：Supabase Edge Functions（search-flood-news）
 - 資料庫：Supabase Postgres（含 RLS 政策與 migrations）
