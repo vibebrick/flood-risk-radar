@@ -5,12 +5,14 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 interface FloodRiskMapProps {
   searchLocation?: { latitude: number; longitude: number; address: string };
   searchRadius: number;
+  heatmapPoints?: Array<{ latitude: number; longitude: number; weight?: number }>;
   onLocationSelect?: (location: { latitude: number; longitude: number; address: string }) => void;
 }
 
 export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
   searchLocation,
   searchRadius,
+  heatmapPoints,
   onLocationSelect
 }) => {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -86,7 +88,8 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
           layers: [{
             id: 'main-tiles',
             type: 'raster' as const,
-            source: 'main-tiles'
+            source: 'main-tiles',
+            paint: { 'raster-fade-duration': 300 }
           }]
         };
         
@@ -171,6 +174,54 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
                 'line-color': 'hsl(16, 90%, 50%)',
                 'line-width': 2,
                 'line-opacity': 0.8
+              }
+            });
+          }
+
+          // Hotspots source & layers
+          if (!map.current?.getSource('hotspots')) {
+            map.current?.addSource('hotspots', {
+              type: 'geojson',
+              data: { type: 'FeatureCollection', features: [] }
+            });
+          }
+
+          if (!map.current?.getLayer('hotspots-heat')) {
+            map.current?.addLayer({
+              id: 'hotspots-heat',
+              type: 'heatmap',
+              source: 'hotspots',
+              maxzoom: 22,
+              paint: {
+                'heatmap-weight': ['coalesce', ['get', 'weight'], 0.5],
+                'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 14, 2],
+                'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 8, 16, 14, 32],
+                'heatmap-color': [
+                  'interpolate', ['linear'], ['heatmap-density'],
+                  0, 'rgba(0,0,0,0)',
+                  0.2, 'hsl(208, 80%, 70%)',
+                  0.4, 'hsl(200, 80%, 55%)',
+                  0.6, 'hsl(40, 95%, 55%)',
+                  0.8, 'hsl(16, 90%, 50%)',
+                  1, 'hsl(0, 85%, 45%)'
+                ],
+                'heatmap-opacity': 0.7
+              }
+            });
+          }
+
+          if (!map.current?.getLayer('hotspots-circle')) {
+            map.current?.addLayer({
+              id: 'hotspots-circle',
+              type: 'circle',
+              source: 'hotspots',
+              minzoom: 12,
+              paint: {
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 3, 16, 8],
+                'circle-color': 'hsl(16, 90%, 55%)',
+                'circle-stroke-color': '#fff',
+                'circle-stroke-width': 1,
+                'circle-opacity': 0.85
               }
             });
           }
@@ -296,6 +347,21 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
       fit();
     }
   }, [searchLocation, searchRadius, mapLoaded]);
+
+  // Update hotspots when points change
+  useEffect(() => {
+    if (!map.current || !mapLoaded) return;
+    const hotspots = map.current.getSource('hotspots') as maplibregl.GeoJSONSource | undefined;
+    if (!hotspots) return;
+
+    const features = (heatmapPoints || []).map(p => ({
+      type: 'Feature' as const,
+      geometry: { type: 'Point' as const, coordinates: [p.longitude, p.latitude] },
+      properties: { weight: p.weight ?? 0.6 }
+    }));
+
+    hotspots.setData({ type: 'FeatureCollection', features } as any);
+  }, [heatmapPoints, mapLoaded]);
 
   // Function to create a circle polygon
   const createCircle = (center: [number, number], radiusInKm: number, points = 64) => {

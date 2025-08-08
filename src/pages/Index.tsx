@@ -28,6 +28,7 @@ const Index = () => {
   const [searchLocation, setSearchLocation] = useState<SearchLocation | null>(null);
   const [searchRadius, setSearchRadius] = useState(500);
   const [news, setNews] = useState<NewsItem[]>([]);
+  const [heatmapPoints, setHeatmapPoints] = useState<Array<{ latitude: number; longitude: number; weight?: number }>>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isNewsLoading, setIsNewsLoading] = useState(false);
   const [currentSearchStats, setCurrentSearchStats] = useState<{
@@ -59,6 +60,7 @@ const Index = () => {
           const db = b?.publish_date ? new Date(b.publish_date as string).getTime() : 0;
           return db - da;
         }));
+        setHeatmapPoints(data.points || []);
         
         // Get updated search stats for current location
         const { data: searchData, error: searchError } = await supabase
@@ -157,6 +159,7 @@ const Index = () => {
               <FloodRiskMap
                 searchLocation={searchLocation || undefined}
                 searchRadius={searchRadius}
+                heatmapPoints={heatmapPoints}
                 onLocationSelect={(location) => handleSearch(location, searchRadius)}
               />
               <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">

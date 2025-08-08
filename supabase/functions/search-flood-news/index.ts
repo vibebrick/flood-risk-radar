@@ -89,12 +89,14 @@ serve(async (req) => {
     // If we already have news for this location, return it
     if (existingNews && existingNews.length > 0) {
       console.log(`Returning ${existingNews.length} existing news items`);
+      const points = generateHeatmapPoints(existingNews, searchLocation, searchRadius);
       return new Response(
         JSON.stringify({ 
           success: true, 
           news: existingNews,
           searchId: searchId,
-          cached: true 
+          cached: true,
+          points
         }),
         { 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -119,12 +121,15 @@ serve(async (req) => {
 
     console.log(`Generated ${mockNews.length} mock news items`);
 
+    const points = generateHeatmapPoints(mockNews, searchLocation, searchRadius);
+
     return new Response(
       JSON.stringify({ 
         success: true, 
         news: mockNews,
         searchId: searchId,
-        cached: false 
+        cached: false,
+        points
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -295,4 +300,35 @@ function extractLocationKeywords(address: string): string {
   // Extract meaningful location keywords from address
   const keywords = address.split(/[,，]/)[0]; // Get first part before comma
   return keywords.replace(/\d+號.*/, '').trim(); // Remove house numbers
+}
+
+function generateHeatmapPoints(news: any[], center: { latitude: number; longitude: number }, radiusMeters: number) {
+  const R = 6371000; // Earth radius in meters
+  const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+  const maxDist = Math.max(50, Math.min(radiusMeters, 1500)); // cap spread for focus
+
+  return news.map((n) => {
+    const angle = Math.random() * 2 * Math.PI;
+    const dist = Math.random() * maxDist;
+    const dByR = dist / R;
+
+    const lat1 = center.latitude * Math.PI / 180;
+    const lon1 = center.longitude * Math.PI / 180;
+
+    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dByR) + Math.cos(lat1) * Math.sin(dByR) * Math.cos(angle));
+    const lon2 = lon1 + Math.atan2(Math.sin(angle) * Math.sin(dByR) * Math.cos(lat1), Math.cos(dByR) - Math.sin(lat1) * Math.sin(lat2));
+
+    const latitude = lat2 * 180 / Math.PI;
+    const longitude = lon2 * 180 / Math.PI;
+
+    let weight = 0.7;
+    try {
+      if (n.publish_date) {
+        const days = Math.max(0, (Date.now() - new Date(n.publish_date).getTime()) / (1000 * 60 * 60 * 24));
+        weight = clamp(1 - days / 30, 0.3, 1);
+      }
+    } catch (_e) { /* ignore */ }
+
+    return { latitude, longitude, weight: Number(weight.toFixed(2)) };
+  });
 }
