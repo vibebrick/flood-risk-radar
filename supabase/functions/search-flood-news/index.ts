@@ -105,27 +105,132 @@ serve(async (req) => {
       );
     }
 
-    // Search for flood-related news using simulated news search
-    // In a real implementation, you would integrate with news APIs
-    const mockNews = generateMockFloodNews(searchLocation.address, searchId, searchRadius);
-    
+    // Try free data sources first (GDELT Doc API -> Google News RSS), then fallback to mock
+    const getTimespanDays = (r: number) => (r <= 300 ? 10 : r <= 700 ? 30 : 60);
+    const mainLocation = extractLocationKeywords(searchLocation.address) || '該地區';
+    const keywords = ['淹水','積水','水災','水患','豪雨','暴雨','排水','抽水','淹沒'];
+    const queryTerm = `${mainLocation} (${keywords.join(' OR ')})`;
+    const timespanDays = getTimespanDays(Number(searchRadius) || 0);
+
+    const dedupeByUrl = (list: any[]) => {
+      const seen = new Set<string>();
+      return list.filter((item) => {
+        const u = (item?.url || '').trim();
+        if (!u || seen.has(u)) return false;
+        seen.add(u);
+        return true;
+      });
+    };
+
+    const parseDate = (s: any) => {
+      try {
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) return d.toISOString();
+      } catch (_) { /* ignore */ }
+      return new Date().toISOString();
+    };
+
+    const fetchFromGDELT = async (): Promise<any[]> => {
+      try {
+        const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(queryTerm)}&format=json&timespan=${timespanDays}d&maxrecords=50&sort=datedesc`;
+        console.log('Fetching GDELT:', url);
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`GDELT HTTP ${resp.status}`);
+        const data = await resp.json();
+        const articles = (data.articles || data.documents || []) as any[];
+        const mapped = articles.map((a) => {
+          const title = a.title || a.sourceArticleTitle || a.documentTitle || '無標題';
+          const url = a.url || a.documentURL || a.sourceArticleURL;
+          const source = a.sourceCommonName || a.domain || a.source || 'GDELT';
+          const dateRaw = a.seendate || a.date || a.publishedDate || a.publishDate || a.datetime;
+          const snippet = a.excerpt || a.snippet || a.summary || '';
+          return {
+            search_id: searchId,
+            title,
+            url,
+            source,
+            content_snippet: snippet,
+            publish_date: parseDate(dateRaw),
+            content_type: '線上新聞',
+            created_at: new Date().toISOString()
+          };
+        }).filter((n) => n.url);
+        return dedupeByUrl(mapped);
+      } catch (e) {
+        console.warn('GDELT fetch failed:', e);
+        return [];
+      }
+    };
+
+    const fetchFromGoogleNewsRSS = async (): Promise<any[]> => {
+      try {
+        const q = `${mainLocation} (${keywords.join(' OR ')})`;
+        const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant`;
+        console.log('Fetching Google News RSS:', rssUrl);
+        const resp = await fetch(rssUrl);
+        if (!resp.ok) throw new Error(`Google RSS HTTP ${resp.status}`);
+        const xml = await resp.text();
+        const doc = new DOMParser().parseFromString(xml, 'text/xml');
+        const items = Array.from(doc.getElementsByTagName('item'));
+        const mapped = items.map((item) => {
+          const title = item.getElementsByTagName('title')[0]?.textContent || '無標題';
+          const link = item.getElementsByTagName('link')[0]?.textContent || '';
+          const pubDate = item.getElementsByTagName('pubDate')[0]?.textContent || '';
+          const sourceEl = item.getElementsByTagName('source')[0];
+          const source = sourceEl?.textContent || 'Google News';
+          return {
+            search_id: searchId,
+            title,
+            url: link,
+            source,
+            content_snippet: '',
+            publish_date: parseDate(pubDate),
+            content_type: 'RSS新聞',
+            created_at: new Date().toISOString()
+          };
+        }).filter((n) => n.url);
+        return dedupeByUrl(mapped).slice(0, 50);
+      } catch (e) {
+        console.warn('Google News RSS fetch failed:', e);
+        return [];
+      }
+    };
+
+    let externalNews: any[] = [];
+    const gdeltNews = await fetchFromGDELT();
+    if (gdeltNews.length > 0) {
+      externalNews = gdeltNews;
+    } else {
+      const rssNews = await fetchFromGoogleNewsRSS();
+      externalNews = rssNews;
+    }
+
+    let resultNews = externalNews;
+
+    // Fallback to mock if external empty
+    if (resultNews.length === 0) {
+      const mockNews = generateMockFloodNews(searchLocation.address, searchId, searchRadius);
+      resultNews = mockNews;
+    }
+
     // Store the news in the database and return the inserted rows
-    let resultNews = mockNews;
-    if (mockNews.length > 0) {
-      const { data: insertedNews, error: insertNewsError } = await supabase
+    if (resultNews.length > 0) {
+      const { data: inserted, error: insertNewsError } = await supabase
         .from('flood_news')
-        .insert(mockNews)
+        .insert(resultNews)
         .select('*')
         .order('publish_date', { ascending: false });
 
       if (insertNewsError) {
         console.error('Error inserting news:', insertNewsError);
-      } else if (insertedNews) {
-        resultNews = insertedNews;
+      } else if (inserted) {
+        resultNews = inserted;
       }
     }
 
-    console.log(`Generated ${resultNews.length} mock news items`);
+    console.log(`Prepared ${resultNews.length} news items (external or mock)`);
+
+    // proceed to build heatmap points
 
     const points = generateHeatmapPoints(resultNews, searchLocation, searchRadius);
 
