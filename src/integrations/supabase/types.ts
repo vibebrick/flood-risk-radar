@@ -17,8 +17,11 @@ export type Database = {
       flood_news: {
         Row: {
           content_snippet: string | null
+          content_type: string | null
           created_at: string
+          fetched_at: string
           id: string
+          location_match_level: string | null
           publish_date: string | null
           search_id: string
           source: string | null
@@ -27,8 +30,11 @@ export type Database = {
         }
         Insert: {
           content_snippet?: string | null
+          content_type?: string | null
           created_at?: string
+          fetched_at?: string
           id?: string
+          location_match_level?: string | null
           publish_date?: string | null
           search_id: string
           source?: string | null
@@ -37,8 +43,11 @@ export type Database = {
         }
         Update: {
           content_snippet?: string | null
+          content_type?: string | null
           created_at?: string
+          fetched_at?: string
           id?: string
+          location_match_level?: string | null
           publish_date?: string | null
           search_id?: string
           source?: string | null
