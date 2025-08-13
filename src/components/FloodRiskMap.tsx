@@ -43,20 +43,54 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
     }
   };
 
-  // Helper: create or move a draggable pin marker
+  // Helper: create or move a draggable pin marker with improved visibility
   const createOrMovePin = (lng: number, lat: number) => {
     if (!map.current) return;
 
     if (!pinMarkerRef.current) {
+      // Create a more visible pin element
       const el = document.createElement('div');
-      el.className = 'size-4 rounded-full border border-border shadow-card bg-destructive';
-      const marker = new maplibregl.Marker({ element: el, draggable: true, anchor: 'center' })
+      el.style.cssText = `
+        width: 24px;
+        height: 24px;
+        background: hsl(0, 84%, 60%);
+        border: 2px solid white;
+        border-radius: 50% 50% 50% 0;
+        transform: rotate(-45deg);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        cursor: pointer;
+        z-index: 1000;
+      `;
+      
+      // Add inner dot for better visibility
+      const innerDot = document.createElement('div');
+      innerDot.style.cssText = `
+        width: 8px;
+        height: 8px;
+        background: white;
+        border-radius: 50%;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) rotate(45deg);
+      `;
+      el.appendChild(innerDot);
+      
+      const marker = new maplibregl.Marker({ 
+        element: el, 
+        draggable: true, 
+        anchor: 'bottom',
+        pitchAlignment: 'map',
+        rotationAlignment: 'map'
+      })
         .setLngLat([lng, lat])
         .addTo(map.current);
+        
       marker.on('dragend', () => {
         const pos = marker.getLngLat();
         pickLocation(pos.lng, pos.lat);
       });
+      
       pinMarkerRef.current = marker;
     } else {
       pinMarkerRef.current.setLngLat([lng, lat]);
@@ -277,9 +311,14 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
           setMapLoaded(true);
         });
 
-        // Handle map clicks for location selection
+        // Handle map clicks for location selection and pin placement
         map.current.on('click', async (e) => {
           const { lng, lat } = e.lngLat;
+          
+          // Create or move pin to clicked location
+          createOrMovePin(lng, lat);
+          
+          // Also trigger location search
           pickLocation(lng, lat);
         });
 
@@ -456,36 +495,11 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
         </div>
       )}
       
-      {/* Controls: top-left */}
+      {/* Info display: top-left */}
       {mapLoaded && (
-        <div className="absolute top-2 left-2 z-20 space-y-2">
+        <div className="absolute top-2 left-2 z-20">
           <div className="bg-card/95 backdrop-blur-sm rounded-lg px-3 py-2 text-sm font-medium border border-border shadow-card">
-            {searchLocation ? `搜尋半徑: ${searchRadius}m` : '圖釘工具'}
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="map"
-              size="sm"
-              aria-label="釘選地圖中心"
-              title="釘選地圖中心"
-              onClick={() => {
-                if (!map.current) return;
-                const center = map.current.getCenter();
-                createOrMovePin(center.lng, center.lat);
-                pickLocation(center.lng, center.lat);
-              }}
-            >
-              釘選地圖中心
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              aria-label="清除圖釘"
-              title="清除圖釘"
-              onClick={clearPin}
-            >
-              清除圖釘
-            </Button>
+            {searchLocation ? `搜尋半徑: ${searchRadius}m` : '點擊地圖放置圖釘'}
           </div>
         </div>
       )}

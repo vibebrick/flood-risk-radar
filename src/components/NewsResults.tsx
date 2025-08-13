@@ -74,9 +74,10 @@ export const NewsResults: React.FC<NewsResultsProps> = ({ news, isLoading = fals
                       {item.content_type && (
                         <Badge 
                           variant={
+                            item.content_type.includes('示範資料') || item.content_type.includes('mock') ? 'destructive' :
                             item.content_type.includes('PTT') || item.content_type.includes('Dcard') || 
                             item.content_type.includes('Facebook') || item.content_type.includes('Line') ||
-                            item.content_type.includes('Instagram') ? 'secondary' : 'outline'
+                            item.content_type.includes('Instagram') ? 'secondary' : 'default'
                           }
                           className="text-xs"
                         >
