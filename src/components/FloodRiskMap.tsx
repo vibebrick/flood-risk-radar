@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ interface FloodRiskMapProps {
   onLocationSelect?: (location: { latitude: number; longitude: number; address: string }) => void;
 }
 
-export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
+const FloodRiskMapComponent: React.FC<FloodRiskMapProps> = ({
   searchLocation,
   searchRadius,
   heatmapPoints,
@@ -20,12 +20,45 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
   const map = useRef<maplibregl.Map | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
-  const [tileSourceIndex, setTileSourceIndex] = useState(0);
+  const currentTileSource = useRef(0);
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const pinMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const initializationRef = useRef(false);
 
-  // Helper: reverse geocode and trigger selection
-  const pickLocation = async (lng: number, lat: number) => {
+  // Memoized tile sources
+  const tileSources = useMemo(() => [
+    {
+      name: 'OpenStreetMap Multi-Server',
+      style: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png', 'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png', 'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      type: 'raster',
+      maxZoom: 19,
+      attribution: '© OpenStreetMap contributors'
+    },
+    {
+      name: 'Stamen Terrain',
+      style: ['https://stamen-tiles-a.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png', 'https://stamen-tiles-b.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png'],
+      type: 'raster',
+      maxZoom: 18,
+      attribution: '© Stamen Design'
+    },
+    {
+      name: 'CartoDB Light',
+      style: ['https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', 'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'],
+      type: 'raster',
+      maxZoom: 19,
+      attribution: '© CartoDB'
+    },
+    {
+      name: 'WMTS OSM',
+      style: ['https://tiles.wmflabs.org/osm/{z}/{x}/{y}.png'],
+      type: 'raster',
+      maxZoom: 18,
+      attribution: '© OpenStreetMap'
+    }
+  ], []);
+
+  // Optimized callback for location selection
+  const pickLocation = useCallback(async (lng: number, lat: number) => {
     try {
       const response = await fetch(
         `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=zh-TW,zh,en`
@@ -41,10 +74,10 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
         address: `${lat.toFixed(6)}, ${lng.toFixed(6)}`
       });
     }
-  };
+  }, [onLocationSelect]);
 
-  // Helper: create or move a draggable pin marker with improved visibility
-  const createOrMovePin = (lng: number, lat: number) => {
+  // Optimized pin creation/movement
+  const createOrMovePin = useCallback((lng: number, lat: number) => {
     if (!map.current) return;
 
     if (!pinMarkerRef.current) {
@@ -95,50 +128,40 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
     } else {
       pinMarkerRef.current.setLngLat([lng, lat]);
     }
-  };
+  }, []);
 
-  const clearPin = () => {
+  const clearPin = useCallback(() => {
     if (pinMarkerRef.current) {
       pinMarkerRef.current.remove();
       pinMarkerRef.current = null;
     }
-  };
+  }, []);
 
-  // Multiple reliable tile sources with load balancing
-  const tileSources = [
-    {
-      name: 'OpenStreetMap Multi-Server',
-      style: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png', 'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png', 'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'],
-      type: 'raster',
-      maxZoom: 19,
-      attribution: '© OpenStreetMap contributors'
-    },
-    {
-      name: 'Stamen Terrain',
-      style: ['https://stamen-tiles-a.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png', 'https://stamen-tiles-b.a.ssl.fastly.net/terrain/{z}/{x}/{y}.png'],
-      type: 'raster',
-      maxZoom: 18,
-      attribution: '© Stamen Design'
-    },
-    {
-      name: 'CartoDB Light',
-      style: ['https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', 'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'],
-      type: 'raster',
-      maxZoom: 19,
-      attribution: '© CartoDB'
-    },
-    {
-      name: 'WMTS OSM',
-      style: ['https://tiles.wmflabs.org/osm/{z}/{x}/{y}.png'],
-      type: 'raster',
-      maxZoom: 18,
-      attribution: '© OpenStreetMap'
+  // Dynamic tile source switching without re-initialization
+  const switchTileSource = useCallback((newIndex: number) => {
+    if (!map.current || newIndex >= tileSources.length) return;
+    
+    const newSource = tileSources[newIndex];
+    const tileUrls = Array.isArray(newSource.style) ? newSource.style : [newSource.style];
+    const selectedTileUrl = tileUrls[0];
+    
+    try {
+      const source = map.current.getSource('main-tiles') as maplibregl.RasterTileSource;
+      if (source && source.setTiles) {
+        source.setTiles([selectedTileUrl]);
+        currentTileSource.current = newIndex;
+        console.log(`🔄 Switched to tile source: ${newSource.name}`);
+      }
+    } catch (error) {
+      console.error('Failed to switch tile source:', error);
     }
-  ];
+  }, [tileSources]);
 
-
+  // Stable map initialization (only once)
   useEffect(() => {
-    if (!mapContainer.current || map.current) return;
+    if (!mapContainer.current || map.current || initializationRef.current) return;
+    
+    initializationRef.current = true;
 
     const initializeMap = async () => {
       try {
@@ -149,7 +172,7 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
           ? [searchLocation.longitude, searchLocation.latitude]
           : [120.9605, 23.6978];
         
-        const currentSource = tileSources[tileSourceIndex];
+        const currentSource = tileSources[currentTileSource.current];
         console.log(`🗺️ Initializing map with source: ${currentSource.name}`);
         
         // Select stable tile server
@@ -185,12 +208,13 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
           attributionControl: false
         });
 
-        // Simplified error handling
+        // Simplified error handling with dynamic switching
         map.current.on('error', (e) => {
           console.error('Map error:', e);
-          if (tileSourceIndex < tileSources.length - 1) {
-            console.log(`🔄 Switching to backup tile source: ${tileSources[tileSourceIndex + 1].name}`);
-            setTileSourceIndex(prev => prev + 1);
+          if (currentTileSource.current < tileSources.length - 1) {
+            const nextIndex = currentTileSource.current + 1;
+            console.log(`🔄 Switching to backup tile source: ${tileSources[nextIndex].name}`);
+            switchTileSource(nextIndex);
           } else {
             setMapError('地圖載入失敗，請重試');
           }
@@ -335,8 +359,9 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
         map.current.remove();
         map.current = null;
       }
+      initializationRef.current = false;
     };
-  }, [onLocationSelect, tileSourceIndex]);
+  }, []); // Remove dependencies to prevent re-initialization
 
   // Update map when search location or radius changes using persistent sources
   useEffect(() => {
@@ -470,7 +495,7 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto"></div>
             <div className="text-muted-foreground">載入地圖中...</div>
             <div className="text-xs text-muted-foreground">
-              {tileSources[tileSourceIndex].name}
+              {tileSources[currentTileSource.current].name}
             </div>
           </div>
         </div>
@@ -484,8 +509,13 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
             <button 
               onClick={() => {
                 setMapError(null);
-                setTileSourceIndex(0);
+                currentTileSource.current = 0;
                 setMapLoaded(false);
+                initializationRef.current = false;
+                if (map.current) {
+                  map.current.remove();
+                  map.current = null;
+                }
               }}
               className="px-3 py-1 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90"
             >
@@ -506,3 +536,15 @@ export const FloodRiskMap: React.FC<FloodRiskMapProps> = ({
     </div>
   );
 };
+
+// Memoized export to prevent unnecessary re-renders
+export const FloodRiskMap = React.memo(FloodRiskMapComponent, (prevProps, nextProps) => {
+  return (
+    prevProps.searchRadius === nextProps.searchRadius &&
+    prevProps.searchLocation?.latitude === nextProps.searchLocation?.latitude &&
+    prevProps.searchLocation?.longitude === nextProps.searchLocation?.longitude &&
+    prevProps.searchLocation?.address === nextProps.searchLocation?.address &&
+    prevProps.heatmapPoints === nextProps.heatmapPoints &&
+    prevProps.onLocationSelect === nextProps.onLocationSelect
+  );
+});

@@ -19,7 +19,7 @@ interface SessionOptions {
 
 export const useSessionManagement = (options: SessionOptions = {}) => {
   const {
-    heartbeatInterval = 30000, // 30 seconds
+    heartbeatInterval = 300000, // 5 minutes (reduced frequency)
     sessionTimeout = 1800000, // 30 minutes
     warningThreshold = 300000, // 5 minutes
     enableHeartbeat = true,
@@ -36,20 +36,31 @@ export const useSessionManagement = (options: SessionOptions = {}) => {
   const heartbeatRef = useRef<NodeJS.Timeout>();
   const activityTimerRef = useRef<NodeJS.Timeout>();
   const warningShownRef = useRef(false);
+  const lastActivityRef = useRef(new Date());
+  const sessionExpiryRef = useRef<Date | null>(null);
   const { toast } = useToast();
 
-  // Update last activity time
+  // Update last activity time (optimized with refs)
   const updateActivity = useCallback(() => {
     const now = new Date();
     const expiry = new Date(now.getTime() + sessionTimeout);
     
-    setSessionState(prev => ({
-      ...prev,
-      lastActivity: now,
-      sessionExpiry: expiry,
-      timeUntilExpiry: sessionTimeout,
-      isSessionActive: true
-    }));
+    lastActivityRef.current = now;
+    sessionExpiryRef.current = expiry;
+    
+    // Only update state if session was inactive
+    setSessionState(prev => {
+      if (!prev.isSessionActive) {
+        return {
+          ...prev,
+          lastActivity: now,
+          sessionExpiry: expiry,
+          timeUntilExpiry: sessionTimeout,
+          isSessionActive: true
+        };
+      }
+      return prev;
+    });
 
     warningShownRef.current = false;
   }, [sessionTimeout]);
@@ -166,13 +177,13 @@ export const useSessionManagement = (options: SessionOptions = {}) => {
     };
   }, [enableHeartbeat, heartbeatInterval, checkSessionHealth, sendHeartbeat]);
 
-  // Session expiry countdown
+  // Session expiry countdown (reduced frequency)
   useEffect(() => {
     const updateCountdown = () => {
-      if (!sessionState.sessionExpiry) return;
+      if (!sessionExpiryRef.current) return;
 
       const now = new Date().getTime();
-      const expiry = sessionState.sessionExpiry.getTime();
+      const expiry = sessionExpiryRef.current.getTime();
       const timeLeft = expiry - now;
 
       if (timeLeft <= 0) {
@@ -190,14 +201,15 @@ export const useSessionManagement = (options: SessionOptions = {}) => {
         handleExpiryWarning();
       }
 
+      // Update state less frequently
       setSessionState(prev => ({ ...prev, timeUntilExpiry: timeLeft }));
     };
 
-    const countdownInterval = setInterval(updateCountdown, 1000);
+    const countdownInterval = setInterval(updateCountdown, 5000); // Update every 5 seconds instead of 1
     updateCountdown(); // Initial update
 
     return () => clearInterval(countdownInterval);
-  }, [sessionState.sessionExpiry, warningThreshold, handleExpiryWarning, toast]);
+  }, [warningThreshold, handleExpiryWarning, toast]); // Remove sessionExpiry dependency
 
   // Initialize session
   useEffect(() => {

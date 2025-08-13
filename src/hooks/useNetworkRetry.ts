@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { useToast } from '@/hooks/use-toast';
 
 interface RetryOptions {
@@ -35,6 +35,7 @@ export const useNetworkRetry = <T extends any[], R>(
     retryCount: 0
   });
 
+  const lastToastRef = useRef<number>(0);
   const { toast } = useToast();
 
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -77,7 +78,10 @@ export const useNetworkRetry = <T extends any[], R>(
 
         onRetry?.(attempt + 1, err);
 
-        if (attempt < maxRetries) {
+        // Debounce toast notifications
+        const now = Date.now();
+        if (attempt < maxRetries && now - lastToastRef.current > 3000) {
+          lastToastRef.current = now;
           toast({
             title: "重試中...",
             description: `第 ${attempt + 1} 次重試，${Math.round(delayMs / 1000)} 秒後繼續`,
@@ -102,25 +106,37 @@ export const useNetworkRetry = <T extends any[], R>(
 export const useNetworkStatus = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [lastOnlineTime, setLastOnlineTime] = useState<Date | null>(null);
+  const lastStatusToastRef = useRef<number>(0);
   const { toast } = useToast();
 
   React.useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
       setLastOnlineTime(new Date());
-      toast({
-        title: "網路已連線",
-        description: "網路連線已恢復",
-      });
+      
+      // Debounce status toasts
+      const now = Date.now();
+      if (now - lastStatusToastRef.current > 5000) {
+        lastStatusToastRef.current = now;
+        toast({
+          title: "網路已連線",
+          description: "網路連線已恢復",
+        });
+      }
     };
 
     const handleOffline = () => {
       setIsOnline(false);
-      toast({
-        title: "網路連線中斷",
-        description: "請檢查您的網路連線",
-        variant: "destructive",
-      });
+      
+      const now = Date.now();
+      if (now - lastStatusToastRef.current > 5000) {
+        lastStatusToastRef.current = now;
+        toast({
+          title: "網路連線中斷",
+          description: "請檢查您的網路連線",
+          variant: "destructive",
+        });
+      }
     };
 
     window.addEventListener('online', handleOnline);
