@@ -105,6 +105,13 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_search_stats: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          location_name: string
+          total_searches: number
+        }[]
+      }
       get_total_searches: {
         Args: Record<PropertyKey, never>
         Returns: number
