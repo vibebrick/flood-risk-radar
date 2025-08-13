@@ -29,26 +29,28 @@ export const SearchStats: React.FC<SearchStatsProps> = ({ currentSearch }) => {
 
   const fetchSearchStats = async () => {
     try {
-      // Get hot spots (top 5 most searched locations)
+      // Get hot spots using secure function (no coordinates exposed)
       const { data: hotSpotsData, error: hotSpotsError } = await supabase
-        .from('flood_searches')
-        .select('location_name, search_count, latitude, longitude')
-        .order('search_count', { ascending: false })
-        .limit(5);
+        .rpc('get_search_stats');
 
       if (hotSpotsError) throw hotSpotsError;
 
-      // Get total search count
+      // Get total search count using secure function
       const { data: totalData, error: totalError } = await supabase
-        .from('flood_searches')
-        .select('search_count');
+        .rpc('get_total_searches');
 
       if (totalError) throw totalError;
 
-      const total = totalData?.reduce((sum, item) => sum + item.search_count, 0) || 0;
+      // Transform data to match expected format (without coordinates)
+      const transformedHotSpots = (hotSpotsData || []).slice(0, 5).map(item => ({
+        location_name: item.location_name,
+        search_count: Number(item.total_searches),
+        latitude: 0, // Remove precise coordinates for privacy
+        longitude: 0
+      }));
 
-      setHotSpots(hotSpotsData || []);
-      setTotalSearches(total);
+      setHotSpots(transformedHotSpots);
+      setTotalSearches(totalData || 0);
     } catch (error) {
       console.error('Error fetching search stats:', error);
     } finally {
