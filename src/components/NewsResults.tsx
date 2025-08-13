@@ -2,7 +2,7 @@ import React from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ExternalLink, Calendar, Globe } from 'lucide-react';
+import { ExternalLink, Calendar, Globe, AlertTriangle } from 'lucide-react';
 
 interface NewsItem {
   id: string;
@@ -71,19 +71,20 @@ export const NewsResults: React.FC<NewsResultsProps> = ({ news, isLoading = fals
                       <h4 className="font-medium text-foreground leading-tight">
                         {item.title}
                       </h4>
-                      {item.content_type && (
-                        <Badge 
-                          variant={
-                            item.content_type.includes('示範資料') || item.content_type.includes('mock') ? 'destructive' :
-                            item.content_type.includes('PTT') || item.content_type.includes('Dcard') || 
-                            item.content_type.includes('Facebook') || item.content_type.includes('Line') ||
-                            item.content_type.includes('Instagram') ? 'secondary' : 'default'
-                          }
-                          className="text-xs"
-                        >
-                          {item.content_type}
-                        </Badge>
-                      )}
+                       {item.content_type && (
+                         <Badge 
+                           variant={
+                             item.content_type === 'Mock Data' || item.content_type.includes('示範資料') || item.content_type.includes('mock') ? 'destructive' :
+                             item.content_type.includes('PTT') || item.content_type.includes('Dcard') || 
+                             item.content_type.includes('Facebook') || item.content_type.includes('Line') ||
+                             item.content_type.includes('Instagram') ? 'secondary' : 'default'
+                           }
+                           className="text-xs flex items-center gap-1"
+                         >
+                           {item.content_type === 'Mock Data' && <AlertTriangle className="h-3 w-3" />}
+                           {item.content_type === 'Mock Data' ? '模擬資料' : item.content_type}
+                         </Badge>
+                       )}
                     </div>
                   </div>
                   <Button variant="outline" size="sm" asChild>

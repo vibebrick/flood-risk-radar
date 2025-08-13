@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -105,12 +106,9 @@ serve(async (req) => {
       );
     }
 
-    // Try free data sources first (GDELT Doc API -> Google News RSS), then fallback to mock
-    const getTimespanDays = (r: number) => (r <= 300 ? 10 : r <= 700 ? 30 : 60);
-    const mainLocation = extractLocationKeywords(searchLocation.address) || '該地區';
-    const keywords = ['淹水','積水','水災','水患','豪雨','暴雨','排水','抽水','淹沒'];
-    const queryTerm = `${mainLocation} (${keywords.join(' OR ')})`;
-    const timespanDays = getTimespanDays(Number(searchRadius) || 0);
+    // Extract location information
+    const address = searchLocation.address;
+    const mainLocation = extractLocationKeywords(address) || '該地區';
 
     const dedupeByUrl = (list: any[]) => {
       const seen = new Set<string>();
@@ -130,53 +128,114 @@ serve(async (req) => {
       return new Date().toISOString();
     };
 
+    // Enhanced location relevancy scoring
+    const calculateLocationRelevance = (title: string, content: string, targetLocation: string): number => {
+      let score = 0;
+      const locationParts = targetLocation.split(/[,\s]+/).filter(p => p.length > 1);
+      const textToCheck = (title + ' ' + content).toLowerCase();
+      
+      locationParts.forEach(part => {
+        if (textToCheck.includes(part.toLowerCase())) {
+          score += part.length > 2 ? 2 : 1;
+        }
+      });
+      
+      return score;
+    };
+
+    // Enhanced flood relevancy scoring
+    const calculateFloodRelevance = (title: string, content: string): number => {
+      const floodTerms = [
+        { terms: ['淹水', '積水', '水災'], weight: 3 },
+        { terms: ['豪雨', '暴雨', '洪水'], weight: 2 },
+        { terms: ['颱風', '颶風', '強降雨'], weight: 2 },
+        { terms: ['排水', '下水道', '道路封閉'], weight: 1 },
+        { terms: ['flood', 'flooding', 'inundation'], weight: 3 },
+        { terms: ['heavy rain', 'storm', 'typhoon'], weight: 2 }
+      ];
+      
+      let score = 0;
+      const textToCheck = (title + ' ' + content).toLowerCase();
+      
+      floodTerms.forEach(({ terms, weight }) => {
+        terms.forEach(term => {
+          if (textToCheck.includes(term.toLowerCase())) {
+            score += weight;
+          }
+        });
+      });
+      
+      return score;
+    };
+
     const fetchFromGDELT = async (): Promise<any[]> => {
       try {
-        // Improve search query with more relevant terms
-        const floodKeywords = ['flood', 'flooding', 'water', 'rain', 'storm', 'weather', '淹水', '積水', '水災', '豪雨'];
-        const enhancedQuery = `${mainLocation} (${floodKeywords.join(' OR ')})`;
-        const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(enhancedQuery)}&format=json&timespan=${timespanDays}d&maxrecords=50&sort=datedesc&mode=artlist`;
+        // More precise GDELT query focused on Taiwan and specific location
+        const taiwanRegionFilter = 'Taiwan OR 台灣 OR 臺灣';
+        const floodKeywords = '(淹水 OR 積水 OR 水災 OR 豪雨 OR 暴雨 OR 洪水 OR flood OR flooding)';
         
-        console.log('🔍 Fetching from GDELT with enhanced query:', enhancedQuery);
-        const resp = await fetch(url, {
+        // Build query with location AND flood terms
+        const gdeltQuery = `"${mainLocation}" AND ${floodKeywords} AND (${taiwanRegionFilter})`;
+        console.log(`🔍 Fetching from GDELT with precise query: ${gdeltQuery}`);
+        
+        const response = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(gdeltQuery)}&mode=artlist&maxrecords=40&sort=datedesc&format=json&TIMESPAN=60DAYS&SOURCECOUNTRY=TW`, {
           headers: {
-            'User-Agent': 'FloodRiskMonitor/1.0 (Education Research)',
-            'Accept': 'application/json',
+            'User-Agent': 'FloodMonitor/1.0 Taiwan Flood Alert System',
+            'Accept': 'application/json'
           },
-          timeout: 10000
+          timeout: 12000
         });
         
-        if (!resp.ok) {
-          console.error(`GDELT API error: ${resp.status} ${resp.statusText}`);
-          throw new Error(`GDELT HTTP ${resp.status}`);
+        if (!response.ok) {
+          console.warn(`GDELT API request failed: ${response.status}`);
+          return [];
         }
         
-        const data = await resp.json();
-        console.log('📄 GDELT raw response structure:', Object.keys(data));
+        const data = await response.json();
+        console.log(`📄 GDELT raw response structure: ${JSON.stringify(Object.keys(data))}`);
         
-        const articles = (data.articles || data.documents || []) as any[];
-        console.log(`📰 Found ${articles.length} articles from GDELT`);
+        if (!data.articles || !Array.isArray(data.articles)) {
+          console.warn('GDELT response missing articles array');
+          return [];
+        }
         
-        const mapped = articles.map((a) => {
-          const title = a.title || a.sourceArticleTitle || a.documentTitle || '無標題';
-          const url = a.url || a.documentURL || a.sourceArticleURL;
-          const source = a.sourceCommonName || a.domain || a.source || 'GDELT';
-          const dateRaw = a.seendate || a.date || a.publishedDate || a.publishDate || a.datetime;
-          const snippet = a.excerpt || a.snippet || a.summary || '';
-          return {
-            search_id: searchId,
-            title,
-            url,
-            source,
-            content_snippet: snippet,
-            publish_date: parseDate(dateRaw),
-            content_type: 'GDELT新聞',
-            location_match_level: 'external_api',
-            created_at: new Date().toISOString()
-          };
-        }).filter((n) => n.url && n.title !== '無標題');
+        console.log(`📰 Found ${data.articles.length} articles from GDELT`);
         
-        console.log(`✅ Successfully processed ${mapped.length} valid GDELT articles`);
+        const mapped = data.articles
+          .filter((article: any) => {
+            const title = article.title || '';
+            const url = article.url || '';
+            
+            if (!title || !url) return false;
+            
+            // Calculate relevance scores
+            const locationScore = calculateLocationRelevance(title, '', address);
+            const floodScore = calculateFloodRelevance(title, '');
+            
+            // Require minimum relevance
+            return locationScore >= 1 && floodScore >= 1;
+          })
+          .map((article: any) => {
+            const title = article.title || '無標題';
+            const content = article.socialimage?.description || '';
+            
+            return {
+              search_id: searchId,
+              title,
+              url: article.url || '',
+              source: article.domain || 'GDELT',
+              content_snippet: content.substring(0, 200),
+              publish_date: article.seendate ? new Date(article.seendate) : new Date(),
+              content_type: 'GDELT',
+              location_match_level: 'high_relevance',
+              relevance_score: calculateLocationRelevance(title, content, address) + calculateFloodRelevance(title, content),
+              created_at: new Date().toISOString()
+            };
+          })
+          .sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0))
+          .slice(0, 25); // Take top 25 most relevant
+        
+        console.log(`✅ Successfully processed ${mapped.length} highly relevant GDELT articles`);
         return dedupeByUrl(mapped);
       } catch (e) {
         console.error('❌ GDELT fetch failed:', e);
@@ -186,30 +245,28 @@ serve(async (req) => {
 
     const fetchFromGoogleNewsRSS = async (): Promise<any[]> => {
       try {
-        // Use more specific flood-related keywords for Taiwan news
-        const floodTerms = ['淹水', '積水', '水災', '豪雨', '暴雨', '洪水', '排水'];
-        const locationTerms = [mainLocation];
-        
-        // Create multiple search queries for better coverage
-        const queries = [
-          `${mainLocation} ${floodTerms.slice(0, 3).join(' OR ')}`,
-          `${mainLocation} 淹水`,
-          `${mainLocation} 豪雨`
+        // Precise location-based flood news queries
+        const precisQueries = [
+          `"${mainLocation}" 淹水`,
+          `"${mainLocation}" 積水`,
+          `"${mainLocation}" 豪雨`,
+          `"${address.split(',')[0]}" 水災`
         ];
         
         let allResults: any[] = [];
         
-        for (const query of queries) {
+        for (const query of precisQueries) {
           try {
-            const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant&num=20`;
+            const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant&num=15`;
             console.log(`🔍 Fetching Google News RSS: "${query}"`);
             
             const resp = await fetch(rssUrl, {
               headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; FloodMonitor/1.0)',
-                'Accept': 'application/rss+xml, application/xml, text/xml'
+                'User-Agent': 'Mozilla/5.0 (compatible; TaiwanFloodAlert/1.0)',
+                'Accept': 'application/rss+xml, application/xml, text/xml',
+                'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8'
               },
-              timeout: 8000
+              timeout: 10000
             });
             
             if (!resp.ok) {
@@ -218,113 +275,129 @@ serve(async (req) => {
             }
             
             const xml = await resp.text();
-            const doc = new DOMParser().parseFromString(xml, 'text/xml');
-            const items = Array.from(doc.getElementsByTagName('item'));
             
+            // Use the imported DOMParser from deno_dom
+            const doc = new DOMParser().parseFromString(xml, 'text/xml');
+            
+            if (!doc) {
+              console.warn(`Failed to parse XML for query: "${query}"`);
+              continue;
+            }
+            
+            const items = Array.from(doc.getElementsByTagName('item'));
             console.log(`📰 Found ${items.length} RSS items for query: "${query}"`);
             
-            const mapped = items.map((item) => {
-              const title = item.getElementsByTagName('title')[0]?.textContent || '無標題';
-              const link = item.getElementsByTagName('link')[0]?.textContent || '';
-              const pubDate = item.getElementsByTagName('pubDate')[0]?.textContent || '';
-              const description = item.getElementsByTagName('description')[0]?.textContent || '';
-              const sourceEl = item.getElementsByTagName('source')[0];
-              const source = sourceEl?.textContent || sourceEl?.getAttribute('url')?.split('/')[2] || 'Google News';
-              
-              return {
-                search_id: searchId,
-                title,
-                url: link,
-                source,
-                content_snippet: description.substring(0, 200),
-                publish_date: parseDate(pubDate),
-                content_type: 'Google News',
-                location_match_level: 'rss_search',
-                created_at: new Date().toISOString()
-              };
-            }).filter((n) => n.url && n.title !== '無標題');
+            const mapped = items
+              .map((item) => {
+                const title = item.getElementsByTagName('title')[0]?.textContent || '無標題';
+                const link = item.getElementsByTagName('link')[0]?.textContent || '';
+                const pubDate = item.getElementsByTagName('pubDate')[0]?.textContent || '';
+                const description = item.getElementsByTagName('description')[0]?.textContent || '';
+                const sourceEl = item.getElementsByTagName('source')[0];
+                const source = sourceEl?.textContent || sourceEl?.getAttribute('url')?.split('/')[2] || 'Google News';
+                
+                // Calculate relevance for this article
+                const locationScore = calculateLocationRelevance(title, description, address);
+                const floodScore = calculateFloodRelevance(title, description);
+                
+                return {
+                  search_id: searchId,
+                  title,
+                  url: link,
+                  source,
+                  content_snippet: description.substring(0, 200),
+                  publish_date: parseDate(pubDate),
+                  content_type: 'Google News',
+                  location_match_level: locationScore >= 2 ? 'high_relevance' : 'medium_relevance',
+                  relevance_score: locationScore + floodScore,
+                  created_at: new Date().toISOString()
+                };
+              })
+              .filter((n) => {
+                // Only include articles with minimum relevance
+                return n.url && n.title !== '無標題' && (n.relevance_score || 0) >= 2;
+              });
             
             allResults = allResults.concat(mapped);
           } catch (queryError) {
-            console.warn(`Query "${query}" failed:`, queryError);
+            console.error(`Query "${query}" failed:`, queryError);
           }
         }
         
-        const uniqueResults = dedupeByUrl(allResults);
-        console.log(`✅ Successfully processed ${uniqueResults.length} unique Google News articles`);
-        return uniqueResults.slice(0, 30);
-        
+        // Sort by relevance and take top results
+        const sortedResults = dedupeByUrl(allResults).sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0));
+        console.log(`✅ Successfully processed ${sortedResults.length} relevant Google News articles`);
+        return sortedResults.slice(0, 15);
       } catch (e) {
         console.error('❌ Google News RSS fetch failed:', e);
         return [];
       }
     };
 
-    // Try multiple external sources and combine results
-    let externalNews: any[] = [];
-    
-    console.log('🚀 Starting news fetch from external sources...');
-    
-    // Try both sources in parallel for better results
-    const [gdeltNews, rssNews] = await Promise.allSettled([
+    // Fetch news from external sources with enhanced relevancy
+    console.log('🚀 Starting enhanced news fetch with relevancy filtering...');
+    const [gdeltResults, googleResults] = await Promise.allSettled([
       fetchFromGDELT(),
       fetchFromGoogleNewsRSS()
     ]);
-    
-    if (gdeltNews.status === 'fulfilled' && gdeltNews.value.length > 0) {
-      console.log(`✅ GDELT returned ${gdeltNews.value.length} articles`);
-      externalNews = externalNews.concat(gdeltNews.value);
-    }
-    
-    if (rssNews.status === 'fulfilled' && rssNews.value.length > 0) {
-      console.log(`✅ Google News returned ${rssNews.value.length} articles`);
-      externalNews = externalNews.concat(rssNews.value);
-    }
-    
-    // Deduplicate combined results
-    externalNews = dedupeByUrl(externalNews);
-    console.log(`📊 Combined external sources: ${externalNews.length} unique articles`);
-    
-    let resultNews = externalNews;
 
-    // Only fallback to mock if no external sources returned any results
-    if (resultNews.length === 0) {
-      console.log('⚠️ No external news found, generating mock data...');
-      const mockNews = generateMockFloodNews(searchLocation.address, searchId, searchRadius);
-      // Mark mock news clearly
-      const markedMockNews = mockNews.map(news => ({
-        ...news,
-        location_match_level: 'mock_data',
-        content_type: `${news.content_type || '模擬新聞'} (示範資料)`
-      }));
-      resultNews = markedMockNews;
+    let externalNews: any[] = [];
+    
+    if (gdeltResults.status === 'fulfilled') {
+      externalNews = externalNews.concat(gdeltResults.value);
+      console.log(`✅ GDELT returned ${gdeltResults.value.length} relevant articles`);
+    } else {
+      console.error('❌ GDELT failed:', gdeltResults.reason);
+    }
+    
+    if (googleResults.status === 'fulfilled') {
+      externalNews = externalNews.concat(googleResults.value);
+      console.log(`✅ Google News returned ${googleResults.value.length} relevant articles`);
+    } else {
+      console.error('❌ Google News failed:', googleResults.reason);
+    }
+
+    // Remove duplicates and sort by relevance
+    externalNews = dedupeByUrl(externalNews).sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0));
+    console.log(`📊 Combined external sources: ${externalNews.length} unique, relevant articles`);
+
+    // Only use mock data if absolutely no relevant news is found
+    if (externalNews.length === 0) {
+      console.log('📝 No relevant external news found, generating contextual mock data...');
+      externalNews = generateMockFloodNews(address, searchId, searchRadius);
+      // Mark mock data clearly
+      externalNews.forEach(item => {
+        item.content_type = 'Mock Data';
+        item.location_match_level = 'simulated';
+      });
+    } else {
+      console.log(`🎯 Found ${externalNews.length} relevant news articles - no mock data needed`);
     }
 
     // Store the news in the database and return the inserted rows
-    if (resultNews.length > 0) {
+    if (externalNews.length > 0) {
       const { data: inserted, error: insertNewsError } = await supabase
         .from('flood_news')
-        .insert(resultNews)
+        .insert(externalNews)
         .select('*')
         .order('publish_date', { ascending: false });
 
       if (insertNewsError) {
         console.error('Error inserting news:', insertNewsError);
       } else if (inserted) {
-        resultNews = inserted;
+        externalNews = inserted;
       }
     }
 
-    console.log(`Prepared ${resultNews.length} news items (external or mock)`);
+    console.log(`Prepared ${externalNews.length} news items (external or mock)`);
 
-    // proceed to build heatmap points
-
-    const points = generateHeatmapPoints(resultNews, searchLocation, searchRadius);
+    // Generate heatmap points
+    const points = generateHeatmapPoints(externalNews, searchLocation, searchRadius);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
-        news: resultNews,
+        news: externalNews,
         searchId: searchId,
         cached: false,
         points
