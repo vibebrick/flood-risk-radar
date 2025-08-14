@@ -9,12 +9,19 @@ import { searchLocation, getSuggestions } from '@/utils/geocoding';
 
 interface SearchFormProps {
   onSearch: (location: { latitude: number; longitude: number; address: string }, radius: number) => void;
+  onRadiusChange?: (radius: number) => void;
   isSearching?: boolean;
+  defaultRadius?: number;
 }
 
-export const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isSearching = false }) => {
+export const SearchForm: React.FC<SearchFormProps> = ({ 
+  onSearch, 
+  onRadiusChange, 
+  isSearching = false, 
+  defaultRadius = 500 
+}) => {
   const [query, setQuery] = useState('');
-  const [selectedRadius, setSelectedRadius] = useState(500);
+  const [selectedRadius, setSelectedRadius] = useState(defaultRadius);
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [error, setError] = useState<string>('');
@@ -138,7 +145,10 @@ export const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isSearching = 
                 key={option.value}
                 variant={selectedRadius === option.value ? "default" : "outline"}
                 className="cursor-pointer px-3 py-1"
-                onClick={() => setSelectedRadius(option.value)}
+                onClick={() => {
+                  setSelectedRadius(option.value);
+                  onRadiusChange?.(option.value);
+                }}
               >
                 {option.label}
               </Badge>

@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useNetworkRetry, useNetworkStatus } from '@/hooks/useNetworkRetry';
 import { useSessionManagement } from '@/hooks/useSessionManagement';
 import { NetworkStatusIndicator, GlobalLoadingOverlay } from '@/components/LoadingStates';
+import { getFloodIncidentsWithinRadius, convertIncidentsToHeatmapPoints, type FloodIncident } from '@/services/floodData';
 
 interface SearchLocation {
   latitude: number;
@@ -32,6 +33,7 @@ const Index = () => {
   const [searchRadius, setSearchRadius] = useState(500);
   const [news, setNews] = useState<NewsItem[]>([]);
   const [heatmapPoints, setHeatmapPoints] = useState<Array<{ latitude: number; longitude: number; weight?: number }>>([]);
+  const [floodIncidents, setFloodIncidents] = useState<FloodIncident[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isNewsLoading, setIsNewsLoading] = useState(false);
   const [currentSearchStats, setCurrentSearchStats] = useState<{
@@ -119,7 +121,19 @@ const Index = () => {
         const db = b?.publish_date ? new Date(b.publish_date as string).getTime() : 0;
         return db - da;
       }));
-      setHeatmapPoints(data.points || []);
+      
+      // Fetch real flood incidents for heatmap
+      const incidents = await getFloodIncidentsWithinRadius(
+        location.latitude,
+        location.longitude,
+        radius
+      );
+      setFloodIncidents(incidents);
+      
+      // Convert incidents to heatmap points, combining with any points from news search
+      const incidentHeatmapPoints = convertIncidentsToHeatmapPoints(incidents);
+      const combinedPoints = [...incidentHeatmapPoints, ...(data.points || [])];
+      setHeatmapPoints(combinedPoints);
       
       // Get updated search stats for current location with retry
       try {
@@ -155,6 +169,16 @@ const Index = () => {
     } finally {
       setIsSearching(false);
       setIsNewsLoading(false);
+    }
+  };
+
+  // Handle radius change and auto re-search
+  const handleRadiusChange = async (newRadius: number) => {
+    setSearchRadius(newRadius);
+    
+    // If we have a search location, automatically re-search with new radius
+    if (searchLocation) {
+      await handleSearch(searchLocation, newRadius);
     }
   };
 
@@ -207,7 +231,9 @@ const Index = () => {
           <div className="lg:col-span-1 space-y-6">
             <SearchForm
               onSearch={handleSearch}
+              onRadiusChange={handleRadiusChange}
               isSearching={isSearching}
+              defaultRadius={searchRadius}
             />
 
             <SearchStats currentSearch={currentSearchStats} />
@@ -221,9 +247,15 @@ const Index = () => {
                 </div>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">基於新聞數量</span>
+                    <span className="text-sm text-muted-foreground">新聞風險</span>
                     <Badge variant={news.length === 0 ? "accent" : news.length < 3 ? "warning" : "destructive"}>
-                      {news.length === 0 ? "低風險" : news.length < 3 ? "中風險" : "高風險"}
+                      {news.length === 0 ? "低" : news.length < 3 ? "中" : "高"}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">歷史事件</span>
+                    <Badge variant={floodIncidents.length === 0 ? "accent" : floodIncidents.length < 2 ? "warning" : "destructive"}>
+                      {floodIncidents.length === 0 ? "無" : floodIncidents.length < 2 ? "少量" : "較多"}
                     </Badge>
                   </div>
                   <div className="text-xs text-muted-foreground flex items-start gap-2">
