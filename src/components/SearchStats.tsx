@@ -123,7 +123,7 @@ export const SearchStats: React.FC<SearchStatsProps> = ({ currentSearch }) => {
             <div className="space-y-2">
               {hotSpots.map((spot, index) => (
                 <div
-                  key={`${spot.latitude}-${spot.longitude}`}
+                  key={`${spot.location_name}-${index}`}
                   className="flex items-center justify-between p-2 rounded-lg bg-muted/50"
                 >
                   <div className="flex items-center gap-2">
