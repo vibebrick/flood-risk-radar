@@ -14,9 +14,80 @@ serve(async (req) => {
   }
 
   try {
-    const { searchLocation, searchRadius } = await req.json();
+    // Parse request body with error handling
+    let requestBody;
+    try {
+      requestBody = await req.json();
+    } catch (parseError) {
+      console.error('Failed to parse request body:', parseError);
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'Invalid JSON in request body' 
+        }),
+        { 
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
     
-    console.log('Searching for flood news:', { searchLocation, searchRadius });
+    console.log('Raw request body:', requestBody);
+    
+    // Extract parameters with validation
+    const { searchLocation, searchRadius } = requestBody || {};
+    
+    // Validate required parameters
+    if (!searchLocation) {
+      console.error('Missing searchLocation parameter');
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'searchLocation parameter is required' 
+        }),
+        { 
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+    
+    if (!searchLocation.latitude || !searchLocation.longitude) {
+      console.error('Missing latitude or longitude in searchLocation:', searchLocation);
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'searchLocation must contain latitude and longitude' 
+        }),
+        { 
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+    
+    if (searchRadius === undefined || searchRadius === null) {
+      console.error('Missing searchRadius parameter');
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'searchRadius parameter is required' 
+        }),
+        { 
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+    
+    console.log('Searching for flood news:', { 
+      searchLocation: {
+        latitude: searchLocation.latitude,
+        longitude: searchLocation.longitude,
+        address: searchLocation.address
+      }, 
+      searchRadius 
+    });
 
     // Initialize Supabase client
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
