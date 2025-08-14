@@ -14,7 +14,7 @@ serve(async (req) => {
   }
 
   try {
-    // Parse request body with error handling
+    // Parse request body with enhanced error handling
     let requestBody;
     try {
       requestBody = await req.json();
@@ -32,12 +32,12 @@ serve(async (req) => {
       );
     }
     
-    console.log('Raw request body:', requestBody);
+    console.log('Processing search request:', requestBody);
     
-    // Extract parameters with validation
+    // Extract and validate parameters
     const { searchLocation, searchRadius } = requestBody || {};
     
-    // Validate required parameters
+    // Enhanced parameter validation
     if (!searchLocation) {
       console.error('Missing searchLocation parameter');
       return new Response(
@@ -52,13 +52,12 @@ serve(async (req) => {
       );
     }
     
-    if (searchLocation.latitude === undefined || searchLocation.latitude === null || 
-        searchLocation.longitude === undefined || searchLocation.longitude === null) {
-      console.error('Missing latitude or longitude in searchLocation:', searchLocation);
+    if (typeof searchLocation.latitude !== 'number' || typeof searchLocation.longitude !== 'number') {
+      console.error('Invalid coordinates in searchLocation:', searchLocation);
       return new Response(
         JSON.stringify({ 
           success: false, 
-          error: 'searchLocation must contain valid latitude and longitude coordinates' 
+          error: 'searchLocation must contain valid numeric latitude and longitude coordinates' 
         }),
         { 
           status: 400,
@@ -67,12 +66,12 @@ serve(async (req) => {
       );
     }
     
-    if (searchRadius === undefined || searchRadius === null) {
-      console.error('Missing searchRadius parameter');
+    if (typeof searchRadius !== 'number' || searchRadius <= 0) {
+      console.error('Invalid searchRadius parameter:', searchRadius);
       return new Response(
         JSON.stringify({ 
           success: false, 
-          error: 'searchRadius parameter is required' 
+          error: 'searchRadius must be a positive number' 
         }),
         { 
           status: 400,
@@ -81,13 +80,10 @@ serve(async (req) => {
       );
     }
     
-    console.log('Searching for flood news:', { 
-      searchLocation: {
-        latitude: searchLocation.latitude,
-        longitude: searchLocation.longitude,
-        address: searchLocation.address
-      }, 
-      searchRadius 
+    console.log('✅ Validated search parameters:', { 
+      coordinates: `${searchLocation.latitude}, ${searchLocation.longitude}`,
+      address: searchLocation.address,
+      radius: `${searchRadius}m`
     });
 
     // Initialize Supabase client
@@ -95,7 +91,7 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Check if this location already exists in the database
+    // Check existing searches and update/create search record
     const { data: existingSearches, error: searchError } = await supabase
       .from('flood_searches')
       .select('*')
@@ -127,12 +123,13 @@ serve(async (req) => {
         throw updateError;
       }
       searchId = existingSearch.id;
+      console.log('📊 Updated existing search record:', searchId);
     } else {
       // Create new search record
       const { data: newSearch, error: insertError } = await supabase
         .from('flood_searches')
         .insert({
-          location_name: searchLocation.address,
+          location_name: searchLocation.address || `${searchLocation.latitude}, ${searchLocation.longitude}`,
           address: searchLocation.address,
           latitude: searchLocation.latitude,
           longitude: searchLocation.longitude,
@@ -147,22 +144,25 @@ serve(async (req) => {
         throw insertError;
       }
       searchId = newSearch.id;
+      console.log('📝 Created new search record:', searchId);
     }
 
-    // Get existing news for this search
+    // Check for existing recent news (within 24 hours)
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data: existingNews, error: newsError } = await supabase
       .from('flood_news')
       .select('*')
       .eq('search_id', searchId)
+      .gte('fetched_at', twentyFourHoursAgo)
       .order('publish_date', { ascending: false });
 
     if (newsError) {
       console.error('Error fetching existing news:', newsError);
     }
 
-    // If we already have news for this location, return it
-    if (existingNews && existingNews.length > 0) {
-      console.log(`Returning ${existingNews.length} existing news items`);
+    // Return cached news if it's recent and substantial
+    if (existingNews && existingNews.length >= 3) {
+      console.log(`🔄 Returning ${existingNews.length} cached news items (fetched within 24h)`);
       const points = await generateHeatmapPoints(existingNews, searchLocation, searchRadius, supabase);
       return new Response(
         JSON.stringify({ 
@@ -170,7 +170,8 @@ serve(async (req) => {
           news: existingNews,
           searchId: searchId,
           cached: true,
-          points
+          points,
+          dataSource: 'cached'
         }),
         { 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -178,10 +179,13 @@ serve(async (req) => {
       );
     }
 
-    // Extract location information
-    const address = searchLocation.address;
-    const mainLocation = extractLocationKeywords(address) || '該地區';
+    // Extract location information for search queries
+    const address = searchLocation.address || '';
+    const mainLocation = extractLocationKeywords(address);
+    
+    console.log('🎯 Extracted location keywords:', mainLocation);
 
+    // Utility functions
     const dedupeByUrl = (list: any[]) => {
       const seen = new Set<string>();
       return list.filter((item) => {
@@ -200,30 +204,38 @@ serve(async (req) => {
       return new Date().toISOString();
     };
 
-    // Enhanced location relevancy scoring
+    // Enhanced relevancy scoring algorithms
     const calculateLocationRelevance = (title: string, content: string, targetLocation: string): number => {
       let score = 0;
       const locationParts = targetLocation.split(/[,\s]+/).filter(p => p.length > 1);
       const textToCheck = (title + ' ' + content).toLowerCase();
       
       locationParts.forEach(part => {
-        if (textToCheck.includes(part.toLowerCase())) {
-          score += part.length > 2 ? 2 : 1;
+        const partLower = part.toLowerCase();
+        if (textToCheck.includes(partLower)) {
+          // Higher score for longer, more specific location names
+          score += partLower.length > 3 ? 3 : (partLower.length > 2 ? 2 : 1);
+        }
+        
+        // Bonus for exact matches in title
+        if (title.toLowerCase().includes(partLower)) {
+          score += 2;
         }
       });
       
       return score;
     };
 
-    // Enhanced flood relevancy scoring
     const calculateFloodRelevance = (title: string, content: string): number => {
       const floodTerms = [
-        { terms: ['淹水', '積水', '水災'], weight: 3 },
-        { terms: ['豪雨', '暴雨', '洪水'], weight: 2 },
-        { terms: ['颱風', '颶風', '強降雨'], weight: 2 },
-        { terms: ['排水', '下水道', '道路封閉'], weight: 1 },
-        { terms: ['flood', 'flooding', 'inundation'], weight: 3 },
-        { terms: ['heavy rain', 'storm', 'typhoon'], weight: 2 }
+        { terms: ['淹水', '積水', '水災'], weight: 4 },
+        { terms: ['豪雨', '暴雨', '洪水', '大雨'], weight: 3 },
+        { terms: ['颱風', '颶風', '強降雨', '梅雨'], weight: 3 },
+        { terms: ['排水', '下水道', '道路封閉', '交通中斷'], weight: 2 },
+        { terms: ['災情', '災害', '受災'], weight: 2 },
+        { terms: ['flood', 'flooding', 'inundation'], weight: 4 },
+        { terms: ['heavy rain', 'storm', 'typhoon'], weight: 3 },
+        { terms: ['drainage', 'sewer', 'road closure'], weight: 2 }
       ];
       
       let score = 0;
@@ -233,6 +245,10 @@ serve(async (req) => {
         terms.forEach(term => {
           if (textToCheck.includes(term.toLowerCase())) {
             score += weight;
+            // Bonus for terms in title
+            if (title.toLowerCase().includes(term.toLowerCase())) {
+              score += 1;
+            }
           }
         });
       });
@@ -240,22 +256,92 @@ serve(async (req) => {
       return score;
     };
 
+    // Enhanced Government Open Data API integration
+    const fetchGovernmentFloodData = async (): Promise<any[]> => {
+      console.log('🏛️ Fetching government flood data...');
+      try {
+        const results: any[] = [];
+        
+        // Taiwan Water Resources Agency flood alerts
+        try {
+          const waterResponse = await fetch('https://data.gov.tw/api/v1/rest/datastore/FLOODING_ALERT', {
+            headers: {
+              'User-Agent': 'TaiwanFloodMonitor/1.0',
+              'Accept': 'application/json'
+            },
+            signal: AbortSignal.timeout(8000)
+          });
+          
+          if (waterResponse.ok) {
+            const waterData = await waterResponse.json();
+            console.log('💧 Water agency data:', waterData.result?.results?.length || 0, 'records');
+            
+            if (waterData.result?.results) {
+              const waterNews = waterData.result.results
+                .filter((item: any) => item.location?.includes(mainLocation))
+                .map((item: any) => ({
+                  search_id: searchId,
+                  title: `${item.location} 淹水警報 - ${item.level}`,
+                  url: item.url || `https://data.gov.tw/dataset/flooding-alert`,
+                  source: '水利署',
+                  content_snippet: `警戒等級: ${item.level}, 發布時間: ${item.publish_time}`,
+                  publish_date: parseDate(item.publish_time),
+                  content_type: '政府公開資料',
+                  location_match_level: 'high_relevance',
+                  relevance_score: 10,
+                  created_at: new Date().toISOString()
+                }));
+              
+              results.push(...waterNews);
+            }
+          }
+        } catch (waterError) {
+          console.warn('💧 Water agency API failed:', waterError.message);
+        }
+
+        // Central Weather Bureau disaster warnings
+        try {
+          const cwbResponse = await fetch('https://opendata.cwb.gov.tw/api/v1/rest/datastore/W-C0033-001?Authorization=CWB-YOUR-API-KEY', {
+            headers: {
+              'User-Agent': 'TaiwanFloodMonitor/1.0',
+              'Accept': 'application/json'
+            },
+            signal: AbortSignal.timeout(8000)
+          });
+          
+          if (cwbResponse.ok) {
+            const cwbData = await cwbResponse.json();
+            console.log('🌦️ Weather bureau data:', cwbData.records?.length || 0, 'records');
+          }
+        } catch (cwbError) {
+          console.warn('🌦️ Weather bureau API failed:', cwbError.message);
+        }
+
+        console.log(`✅ Government data: ${results.length} flood alerts`);
+        return results;
+      } catch (error) {
+        console.error('❌ Government API fetch failed:', error);
+        return [];
+      }
+    };
+
+    // Enhanced GDELT news fetching with better filtering
     const fetchFromGDELT = async (): Promise<any[]> => {
       try {
-        // More precise GDELT query focused on Taiwan and specific location
         const taiwanRegionFilter = 'Taiwan OR 台灣 OR 臺灣';
+        const locationFilter = mainLocation ? `"${mainLocation}"` : '';
         const floodKeywords = '(淹水 OR 積水 OR 水災 OR 豪雨 OR 暴雨 OR 洪水 OR flood OR flooding)';
         
-        // Build query with location AND flood terms
-        const gdeltQuery = `"${mainLocation}" AND ${floodKeywords} AND (${taiwanRegionFilter})`;
-        console.log(`🔍 Fetching from GDELT with precise query: ${gdeltQuery}`);
+        // Build comprehensive query
+        const gdeltQuery = `${locationFilter} AND ${floodKeywords} AND (${taiwanRegionFilter})`;
+        console.log(`🔍 GDELT query: ${gdeltQuery}`);
         
-        const response = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(gdeltQuery)}&mode=artlist&maxrecords=40&sort=datedesc&format=json&TIMESPAN=60DAYS&SOURCECOUNTRY=TW`, {
+        const response = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(gdeltQuery)}&mode=artlist&maxrecords=50&sort=datedesc&format=json&TIMESPAN=90DAYS&SOURCECOUNTRY=TW`, {
           headers: {
             'User-Agent': 'FloodMonitor/1.0 Taiwan Flood Alert System',
             'Accept': 'application/json'
           },
-          timeout: 12000
+          signal: AbortSignal.timeout(15000)
         });
         
         if (!response.ok) {
@@ -264,14 +350,12 @@ serve(async (req) => {
         }
         
         const data = await response.json();
-        console.log(`📄 GDELT raw response structure: ${JSON.stringify(Object.keys(data))}`);
+        console.log(`📄 GDELT found ${data.articles?.length || 0} total articles`);
         
         if (!data.articles || !Array.isArray(data.articles)) {
           console.warn('GDELT response missing articles array');
           return [];
         }
-        
-        console.log(`📰 Found ${data.articles.length} articles from GDELT`);
         
         const mapped = data.articles
           .filter((article: any) => {
@@ -284,8 +368,8 @@ serve(async (req) => {
             const locationScore = calculateLocationRelevance(title, '', address);
             const floodScore = calculateFloodRelevance(title, '');
             
-            // Require minimum relevance
-            return locationScore >= 1 && floodScore >= 1;
+            // Require higher relevance for GDELT
+            return locationScore >= 2 && floodScore >= 3;
           })
           .map((article: any) => {
             const title = article.title || '無標題';
@@ -305,9 +389,9 @@ serve(async (req) => {
             };
           })
           .sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0))
-          .slice(0, 25); // Take top 25 most relevant
+          .slice(0, 20); // Take top 20 most relevant
         
-        console.log(`✅ Successfully processed ${mapped.length} highly relevant GDELT articles`);
+        console.log(`✅ GDELT processed ${mapped.length} highly relevant articles`);
         return dedupeByUrl(mapped);
       } catch (e) {
         console.error('❌ GDELT fetch failed:', e);
@@ -315,22 +399,26 @@ serve(async (req) => {
       }
     };
 
+    // Enhanced Google News RSS with multiple precise queries
     const fetchFromGoogleNewsRSS = async (): Promise<any[]> => {
       try {
-        // Precise location-based flood news queries
+        // More precise and diverse search queries
         const precisQueries = [
-          `"${mainLocation}" 淹水`,
-          `"${mainLocation}" 積水`,
-          `"${mainLocation}" 豪雨`,
-          `"${address.split(',')[0]}" 水災`
-        ];
+          `"${mainLocation}" 淹水 OR 積水`,
+          `"${mainLocation}" 豪雨 OR 暴雨`,
+          `"${mainLocation}" 水災 OR 洪水`,
+          `${address.split(',')[0]} 淹水`,
+          `台灣 淹水 ${mainLocation}`,
+          `${mainLocation} 災情`,
+          `${mainLocation} 排水 問題`
+        ].filter(query => query.includes(mainLocation) && mainLocation !== '該地區');
         
         let allResults: any[] = [];
         
         for (const query of precisQueries) {
           try {
-            const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant&num=15`;
-            console.log(`🔍 Fetching Google News RSS: "${query}"`);
+            const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant&num=20`;
+            console.log(`🔍 Google News query: "${query}"`);
             
             const resp = await fetch(rssUrl, {
               headers: {
@@ -338,7 +426,7 @@ serve(async (req) => {
                 'Accept': 'application/rss+xml, application/xml, text/xml',
                 'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8'
               },
-              timeout: 10000
+              signal: AbortSignal.timeout(12000)
             });
             
             if (!resp.ok) {
@@ -347,8 +435,6 @@ serve(async (req) => {
             }
             
             const xml = await resp.text();
-            
-            // Use the imported DOMParser from deno_dom
             const doc = new DOMParser().parseFromString(xml, 'text/xml');
             
             if (!doc) {
@@ -357,7 +443,7 @@ serve(async (req) => {
             }
             
             const items = Array.from(doc.getElementsByTagName('item'));
-            console.log(`📰 Found ${items.length} RSS items for query: "${query}"`);
+            console.log(`📰 Found ${items.length} RSS items for: "${query}"`);
             
             const mapped = items
               .map((item) => {
@@ -368,72 +454,172 @@ serve(async (req) => {
                 const sourceEl = item.getElementsByTagName('source')[0];
                 const source = sourceEl?.textContent || sourceEl?.getAttribute('url')?.split('/')[2] || 'Google News';
                 
-                // Calculate relevance for this article
+                // Calculate comprehensive relevance
                 const locationScore = calculateLocationRelevance(title, description, address);
                 const floodScore = calculateFloodRelevance(title, description);
+                const totalScore = locationScore + floodScore;
                 
                 return {
                   search_id: searchId,
                   title,
                   url: link,
                   source,
-                  content_snippet: description.substring(0, 200),
+                  content_snippet: description.substring(0, 250),
                   publish_date: parseDate(pubDate),
                   content_type: 'Google News',
-                  location_match_level: locationScore >= 2 ? 'high_relevance' : 'medium_relevance',
-                  relevance_score: locationScore + floodScore,
+                  location_match_level: totalScore >= 5 ? 'high_relevance' : 'medium_relevance',
+                  relevance_score: totalScore,
                   created_at: new Date().toISOString()
                 };
               })
               .filter((n) => {
-                // Only include articles with minimum relevance
-                return n.url && n.title !== '無標題' && (n.relevance_score || 0) >= 2;
+                // Higher quality filter for Google News
+                return n.url && 
+                       n.title !== '無標題' && 
+                       (n.relevance_score || 0) >= 3 &&
+                       !n.title.toLowerCase().includes('廣告');
               });
             
             allResults = allResults.concat(mapped);
+            
+            // Small delay between requests to be respectful
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
           } catch (queryError) {
             console.error(`Query "${query}" failed:`, queryError);
           }
         }
         
-        // Sort by relevance and take top results
-        const sortedResults = dedupeByUrl(allResults).sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0));
-        console.log(`✅ Successfully processed ${sortedResults.length} relevant Google News articles`);
-        return sortedResults.slice(0, 15);
+        // Sort by relevance and dedupe
+        const sortedResults = dedupeByUrl(allResults)
+          .sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0));
+        
+        console.log(`✅ Google News processed ${sortedResults.length} relevant articles`);
+        return sortedResults.slice(0, 20); // Top 20 most relevant
       } catch (e) {
         console.error('❌ Google News RSS fetch failed:', e);
         return [];
       }
     };
 
-    // Fetch news from external sources with enhanced relevancy
-    console.log('🚀 Starting enhanced news fetch with relevancy filtering...');
-    const [gdeltResults, googleResults] = await Promise.allSettled([
+    // Yahoo News RSS integration
+    const fetchFromYahooNews = async (): Promise<any[]> => {
+      try {
+        const queries = [
+          `${mainLocation} 淹水`,
+          `${mainLocation} 豪雨`,
+          `台灣 淹水 災情`
+        ].filter(query => mainLocation !== '該地區');
+
+        let allResults: any[] = [];
+
+        for (const query of queries) {
+          try {
+            // Yahoo News RSS endpoint (if available)
+            const rssUrl = `https://tw.news.yahoo.com/rss/search?p=${encodeURIComponent(query)}`;
+            console.log(`🔍 Yahoo News query: "${query}"`);
+            
+            const resp = await fetch(rssUrl, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; TaiwanFloodAlert/1.0)',
+                'Accept': 'application/rss+xml, application/xml'
+              },
+              signal: AbortSignal.timeout(10000)
+            });
+            
+            if (resp.ok) {
+              const xml = await resp.text();
+              const doc = new DOMParser().parseFromString(xml, 'text/xml');
+              
+              if (doc) {
+                const items = Array.from(doc.getElementsByTagName('item'));
+                console.log(`📰 Yahoo News found ${items.length} items`);
+                
+                const mapped = items.map((item) => {
+                  const title = item.getElementsByTagName('title')[0]?.textContent || '無標題';
+                  const link = item.getElementsByTagName('link')[0]?.textContent || '';
+                  const description = item.getElementsByTagName('description')[0]?.textContent || '';
+                  const pubDate = item.getElementsByTagName('pubDate')[0]?.textContent || '';
+                  
+                  return {
+                    search_id: searchId,
+                    title,
+                    url: link,
+                    source: 'Yahoo News',
+                    content_snippet: description.substring(0, 200),
+                    publish_date: parseDate(pubDate),
+                    content_type: 'Yahoo News',
+                    location_match_level: 'medium_relevance',
+                    relevance_score: calculateLocationRelevance(title, description, address) + calculateFloodRelevance(title, description),
+                    created_at: new Date().toISOString()
+                  };
+                }).filter(item => item.url && (item.relevance_score || 0) >= 2);
+                
+                allResults = allResults.concat(mapped);
+              }
+            }
+          } catch (error) {
+            console.warn(`Yahoo query "${query}" failed:`, error.message);
+          }
+        }
+
+        console.log(`✅ Yahoo News processed ${allResults.length} articles`);
+        return dedupeByUrl(allResults);
+      } catch (e) {
+        console.error('❌ Yahoo News fetch failed:', e);
+        return [];
+      }
+    };
+
+    // Fetch news from all sources with improved error handling
+    console.log('🚀 Starting comprehensive news fetch from multiple sources...');
+    
+    const [govResults, gdeltResults, googleResults, yahooResults] = await Promise.allSettled([
+      fetchGovernmentFloodData(),
       fetchFromGDELT(),
-      fetchFromGoogleNewsRSS()
+      fetchFromGoogleNewsRSS(),
+      fetchFromYahooNews()
     ]);
 
     let externalNews: any[] = [];
     
+    // Combine results from all sources
+    if (govResults.status === 'fulfilled') {
+      externalNews = externalNews.concat(govResults.value);
+      console.log(`✅ Government data: ${govResults.value.length} articles`);
+    } else {
+      console.error('❌ Government data failed:', govResults.reason);
+    }
+    
     if (gdeltResults.status === 'fulfilled') {
       externalNews = externalNews.concat(gdeltResults.value);
-      console.log(`✅ GDELT returned ${gdeltResults.value.length} relevant articles`);
+      console.log(`✅ GDELT: ${gdeltResults.value.length} articles`);
     } else {
       console.error('❌ GDELT failed:', gdeltResults.reason);
     }
     
     if (googleResults.status === 'fulfilled') {
       externalNews = externalNews.concat(googleResults.value);
-      console.log(`✅ Google News returned ${googleResults.value.length} relevant articles`);
+      console.log(`✅ Google News: ${googleResults.value.length} articles`);
     } else {
       console.error('❌ Google News failed:', googleResults.reason);
     }
 
-    // Remove duplicates and sort by relevance
-    externalNews = dedupeByUrl(externalNews).sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0));
-    console.log(`📊 Combined external sources: ${externalNews.length} unique, relevant articles`);
+    if (yahooResults.status === 'fulfilled') {
+      externalNews = externalNews.concat(yahooResults.value);
+      console.log(`✅ Yahoo News: ${yahooResults.value.length} articles`);
+    } else {
+      console.error('❌ Yahoo News failed:', yahooResults.reason);
+    }
 
-    // Only use mock data if absolutely no relevant news is found
+    // Enhanced deduplication and relevance sorting
+    externalNews = dedupeByUrl(externalNews)
+      .sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0))
+      .slice(0, 30); // Take top 30 most relevant from all sources
+
+    console.log(`📊 Combined external sources: ${externalNews.length} unique, highly relevant articles`);
+
+    // Only use mock data if no relevant news is found from any source
     if (externalNews.length === 0) {
       console.log('📝 No relevant external news found, generating contextual mock data...');
       externalNews = generateMockFloodNews(address, searchId, searchRadius);
@@ -441,12 +627,13 @@ serve(async (req) => {
       externalNews.forEach(item => {
         item.content_type = 'Mock Data';
         item.location_match_level = 'simulated';
+        item.relevance_score = 1;
       });
     } else {
-      console.log(`🎯 Found ${externalNews.length} relevant news articles - no mock data needed`);
+      console.log(`🎯 Found ${externalNews.length} highly relevant news articles - using real data`);
     }
 
-    // Store the news in the database and return the inserted rows
+    // Store the news in the database
     if (externalNews.length > 0) {
       const { data: inserted, error: insertNewsError } = await supabase
         .from('flood_news')
@@ -458,12 +645,11 @@ serve(async (req) => {
         console.error('Error inserting news:', insertNewsError);
       } else if (inserted) {
         externalNews = inserted;
+        console.log(`💾 Stored ${inserted.length} news items in database`);
       }
     }
 
-    console.log(`Prepared ${externalNews.length} news items (external or mock)`);
-
-    // Generate heatmap points based on real flood incidents from the database
+    // Generate enhanced heatmap points
     const points = await generateHeatmapPoints(externalNews, searchLocation, searchRadius, supabase);
 
     return new Response(
@@ -472,7 +658,15 @@ serve(async (req) => {
         news: externalNews,
         searchId: searchId,
         cached: false,
-        points
+        points,
+        dataSource: externalNews.length > 0 && externalNews[0].content_type !== 'Mock Data' ? 'real' : 'mock',
+        stats: {
+          totalSources: 4,
+          articlesFound: externalNews.length,
+          relevanceRange: externalNews.length > 0 ? 
+            `${Math.min(...externalNews.map(n => n.relevance_score || 0))}-${Math.max(...externalNews.map(n => n.relevance_score || 0))}` : 
+            '0'
+        }
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -480,11 +674,12 @@ serve(async (req) => {
     );
 
   } catch (error) {
-    console.error('Error in search-flood-news function:', error);
+    console.error('💥 Critical error in search-flood-news:', error);
     return new Response(
       JSON.stringify({ 
         success: false, 
-        error: error.message 
+        error: error.message,
+        stack: error.stack
       }),
       { 
         status: 500,
@@ -494,250 +689,225 @@ serve(async (req) => {
   }
 });
 
-function generateMockFloodNews(address: string, searchId: string, searchRadius: number) {
-  console.log(`Generating realistic flood news for address: ${address}`);
-  
-  const locationKeywords = extractLocationKeywords(address);
-  const mainLocation = locationKeywords || '該地區';
-  
-  const isTainan = address.includes('台南') || address.includes('臺南') || address.includes('Tainan');
-
-  // Helper to get a random date within a past-day window
-  const days = 24 * 60 * 60 * 1000;
-  const randInt = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
-  const randomPastISO = (minDaysAgo: number, maxDaysAgo: number) => {
-    const delta = randInt(minDaysAgo, maxDaysAgo) * days;
-    return new Date(Date.now() - delta).toISOString();
-  };
-
-  // Radius-aware date windows
-  const radius = Math.max(0, Number(searchRadius) || 0);
-  const tainanMax = radius > 700 ? 21 : radius > 400 ? 14 : 10; // days back
-  const otherMin = radius > 700 ? 45 : radius > 400 ? 30 : 15;   // min days back
-  const otherMax = radius > 700 ? 90 : radius > 400 ? 60 : 45;   // max days back
-
-  const tainanDate = () => randomPastISO(0, tainanMax);
-  const otherDate = () => randomPastISO(otherMin, otherMax);
-  
-  let newsTemplates = [] as Array<{
-    title: string;
-    content_snippet: string;
-    source: string;
-    url: string;
-    content_type?: string;
-  }>;
-  
-  if (isTainan) {
-    newsTemplates = [
-      {
-        title: `台南西南氣流重創！${mainLocation}積水深達50公分 居民急撤離`,
-        content_snippet: `台南市多處嚴重積水，${mainLocation}一帶積水深度達50公分，多位居民緊急撤離。市府已啟動一級開設應變中心。`,
-        source: '中央社',
-        url: 'https://example.com/tainan-flood-1',
-        content_type: '官方新聞'
-      },
-      {
-        title: `[爆卦] 台南${mainLocation}根本變成威尼斯了！！！`,
-        content_snippet: `本魯家住${mainLocation}附近，今天早上起床發現外面根本是海啊！機車全部都泡水了QQ 市長治水政策到底在幹嘛？`,
-        source: 'PTT八卦板',
-        url: 'https://example.com/tainan-flood-ptt',
-        content_type: 'PTT討論'
-      },
-      {
-        title: `台南${mainLocation}淹水實況 - 媽媽我想回家😭`,
-        content_snippet: `今天經過${mainLocation}嚇死我了，水淹到小腿肚了還有人騎車過去。`,
-        source: 'Dcard',
-        url: 'https://example.com/tainan-flood-dcard',
-        content_type: 'Dcard分享'
-      },
-      {
-        title: `【台南${mainLocation}淹水】里長緊急通報：請大家避開這些路段！`,
-        content_snippet: `${mainLocation}多處道路積水嚴重，請大家盡量避開以下路段：... 有需要協助的長輩請聯繫里辦公處。`,
-        source: `台南${mainLocation}里Facebook社團`,
-        url: 'https://example.com/tainan-flood-fb',
-        content_type: 'Facebook社團'
-      },
-      {
-        title: `#台南淹水 #${mainLocation} 網友直播淹水實況獲萬人觀看`,
-        content_snippet: `直播中可見道路積水嚴重，部分車輛拋錨，網友留言：希望大家都平安。`,
-        source: 'Instagram直播',
-        url: 'https://example.com/tainan-flood-ig',
-        content_type: 'Instagram直播'
-      },
-      {
-        title: `台南災情慘重！${mainLocation}商家損失慘重 市府宣布災害補助`,
-        content_snippet: `西南氣流造成的淹水災情讓${mainLocation}多家商店泡水，市府宣布啟動災害救助機制。`,
-        source: '聯合新聞網',
-        url: 'https://example.com/tainan-flood-gov',
-        content_type: '官方新聞'
-      }
-    ];
-  } else {
-    newsTemplates = [
-      {
-        title: `${mainLocation}豪雨成災 積水深度破紀錄`,
-        content_snippet: `近日降雨造成${mainLocation}嚴重積水，部分路段積水超過40公分。`,
-        source: '台灣新聞網',
-        url: 'https://example.com/flood-1',
-        content_type: '官方新聞'
-      },
-      {
-        title: `[分享] ${mainLocation}淹水了...大家小心啊`,
-        content_snippet: `剛才經過${mainLocation}，整條路都是水，建議大家繞路。`,
-        source: 'Dcard',
-        url: 'https://example.com/flood-dcard',
-        content_type: 'Dcard分享'
-      },
-      {
-        title: `${mainLocation}居民Line群組：「又淹了！大家互相照應」`,
-        content_snippet: `${mainLocation}社區Line群組回報淹水狀況並互相提醒注意安全。`,
-        source: '在地社區Line群組',
-        url: 'https://example.com/flood-line',
-        content_type: 'Line群組討論'
-      },
-      {
-        title: `${mainLocation}Facebook社團爆料：「排水系統到底什麼時候要修？」`,
-        content_snippet: `${mainLocation}社團出現大量淹水抱怨文，居民質疑排水設施長期未改善。`,
-        source: '地區Facebook社團',
-        url: 'https://example.com/flood-fb',
-        content_type: 'Facebook社團'
-      },
-      {
-        title: `氣候變遷衝擊 ${mainLocation}淹水頻率增加`,
-        content_snippet: `專家指出極端氣候導致${mainLocation}淹水事件頻率上升。`,
-        source: '環境資訊中心',
-        url: 'https://example.com/flood-expert',
-        content_type: '專家分析'
-      },
-      {
-        title: `${mainLocation}淹水警戒！水利署發布一級警報`,
-        content_snippet: `因應持續降雨，水利署針對${mainLocation}發布淹水一級警報。`,
-        source: '水利署',
-        url: 'https://example.com/flood-alert',
-        content_type: '官方警報'
-      }
-    ];
-  }
-
-  const newsCount = isTainan ? Math.min(newsTemplates.length, 3 + Math.floor(Math.random() * 3)) : Math.floor(Math.random() * 3) + 2;
-  const selectedNews = newsTemplates.slice(0, newsCount);
-
-  console.log(`Generated ${selectedNews.length} realistic news items for ${isTainan ? 'Tainan flood event' : 'general flood news'}`);
-
-  return selectedNews.map((news) => ({
-    search_id: searchId,
-    title: news.title,
-    content_snippet: news.content_snippet,
-    source: news.source,
-    url: news.url,
-    publish_date: (isTainan ? tainanDate() : otherDate()),
-    content_type: news.content_type || '一般新聞',
-    created_at: new Date().toISOString()
-  }));
-}
-
+// Enhanced location keyword extraction
 function extractLocationKeywords(address: string): string {
-  // Extract meaningful location keywords from address
-  const keywords = address.split(/[,，]/)[0]; // Get first part before comma
-  return keywords.replace(/\d+號.*/, '').trim(); // Remove house numbers
+  if (!address) return '該地區';
+  
+  // Extract Taiwan location patterns
+  const patterns = [
+    /([台臺][北中南東]?[縣市])/,
+    /([新基][北竹][縣市])/,
+    /([高桃嘉宜花][雄園義蘭蓮][縣市])/,
+    /([苗彰投雲屏澎金連][栗化投林東湖門江][縣市])/,
+    /([^\s,]{2,4}[區鄉鎮市])/,
+    /([^\s,]{2,8}[路街大道])/
+  ];
+  
+  for (const pattern of patterns) {
+    const match = address.match(pattern);
+    if (match) {
+      return match[1];
+    }
+  }
+  
+  // Fallback: return first meaningful part
+  const parts = address.split(/[,\s]+/).filter(p => p.length > 1);
+  return parts[0] || '該地區';
 }
 
-/**
- * Generates heatmap points based on real flood incidents from the database
- */
-async function generateHeatmapPoints(news: any[], searchLocation: any, searchRadius: number, supabaseClient: any): Promise<any[]> {
-  console.log(`Generating heatmap points for search area...`);
-  
-  const centerLat = searchLocation.latitude;
-  const centerLon = searchLocation.longitude;
-  
+// Enhanced heatmap generation with real flood incident data
+async function generateHeatmapPoints(
+  newsItems: any[], 
+  searchLocation: any, 
+  searchRadius: number, 
+  supabase: any
+): Promise<any[]> {
   try {
-    // Fetch real flood incidents within the search radius
-    const { data: floodIncidents, error } = await supabaseClient.rpc('get_flood_incidents_within_radius', {
-      center_lat: centerLat,
-      center_lon: centerLon,
+    console.log('🗺️ Generating enhanced heatmap with real flood data...');
+    
+    // Fetch real flood incidents within radius
+    const { data: floodIncidents, error } = await supabase.rpc('get_flood_incidents_within_radius', {
+      center_lat: searchLocation.latitude,
+      center_lon: searchLocation.longitude,
       radius_meters: searchRadius
     });
 
     if (error) {
-      console.error('Error fetching flood incidents for heatmap:', error);
-      return generateFallbackHeatmapPoints(searchLocation, searchRadius);
+      console.error('Error fetching flood incidents:', error);
     }
 
-    if (!floodIncidents || floodIncidents.length === 0) {
-      console.log('No flood incidents found, generating fallback points');
-      return generateFallbackHeatmapPoints(searchLocation, searchRadius);
+    let points: any[] = [];
+
+    // Add real flood incident points with higher priority
+    if (floodIncidents && floodIncidents.length > 0) {
+      console.log(`📍 Found ${floodIncidents.length} real flood incidents within radius`);
+      
+      const incidentPoints = floodIncidents.map((incident: any) => {
+        // Weight by recency and severity
+        const daysSince = Math.floor((Date.now() - new Date(incident.incident_date).getTime()) / (1000 * 60 * 60 * 24));
+        const recencyWeight = Math.max(0.1, 1 - (daysSince / 365)); // Decay over year
+        const severityWeight = (incident.severity_level || 1) / 5; // Normalize to 0-1
+        const distanceWeight = Math.max(0.1, 1 - (incident.distance_meters / searchRadius)); // Closer = higher weight
+        
+        const weight = Math.min(1.0, (severityWeight + recencyWeight + distanceWeight) / 3);
+        
+        return {
+          lat: parseFloat(incident.latitude),
+          lng: parseFloat(incident.longitude),
+          weight: weight,
+          type: 'historical_incident',
+          date: incident.incident_date,
+          severity: incident.severity_level,
+          source: incident.data_source,
+          address: incident.address
+        };
+      });
+      
+      points = points.concat(incidentPoints);
     }
 
-    console.log(`Found ${floodIncidents.length} real flood incidents for heatmap`);
+    // Add news-based points for recent activity
+    if (newsItems && newsItems.length > 0) {
+      console.log(`📰 Processing ${newsItems.length} news items for heatmap`);
+      
+      const newsPoints = newsItems
+        .filter(item => item.location_match_level !== 'simulated') // Skip mock data
+        .slice(0, 15) // Limit news points
+        .map((item, index) => {
+          // Weight by relevance and recency
+          const relevanceWeight = Math.min(1.0, (item.relevance_score || 1) / 10);
+          const daysSincePublish = Math.floor((Date.now() - new Date(item.publish_date).getTime()) / (1000 * 60 * 60 * 24));
+          const recencyWeight = Math.max(0.2, 1 - (daysSincePublish / 30)); // Decay over month
+          
+          const weight = Math.min(0.8, (relevanceWeight + recencyWeight) / 2); // Cap news weight lower than incidents
+          
+          // Generate location near search center with some variance
+          const offsetLat = (Math.random() - 0.5) * 0.01 * (searchRadius / 1000);
+          const offsetLng = (Math.random() - 0.5) * 0.01 * (searchRadius / 1000);
+          
+          return {
+            lat: searchLocation.latitude + offsetLat,
+            lng: searchLocation.longitude + offsetLng,
+            weight: weight,
+            type: 'news_activity',
+            title: item.title,
+            source: item.source,
+            date: item.publish_date,
+            relevance: item.relevance_score
+          };
+        });
+      
+      points = points.concat(newsPoints);
+    }
 
-    // Convert flood incidents to heatmap points
-    const points = floodIncidents.map((incident: any) => {
-      // Calculate time-based weight (more recent incidents have higher weight)
-      const incidentDate = new Date(incident.incident_date);
-      const now = new Date();
-      const daysDiff = (now.getTime() - incidentDate.getTime()) / (1000 * 60 * 60 * 24);
-      const timeWeight = Math.max(0.1, 1 - (daysDiff / 365)); // Decay over 1 year
-      
-      // Severity-based weight
-      const severityWeight = (incident.severity_level || 1) / 3;
-      
-      // Distance-based weight (closer incidents have higher weight)
-      const distanceWeight = Math.max(0.2, 1 - (incident.distance_meters / searchRadius));
-      
-      const combinedWeight = (timeWeight * 0.4) + (severityWeight * 0.4) + (distanceWeight * 0.2);
-      
-      return {
-        latitude: parseFloat(incident.latitude),
-        longitude: parseFloat(incident.longitude),
-        weight: Math.min(1.0, Math.max(0.1, combinedWeight)),
-        intensity: Math.min(1.0, Math.max(0.1, combinedWeight)),
-        source: 'real_incident',
-        severity: incident.severity_level,
-        date: incident.incident_date
-      };
-    });
+    // If no real data, generate fallback points
+    if (points.length === 0) {
+      console.log('📍 No real data found, generating fallback heatmap points');
+      points = generateFallbackHeatmapPoints(searchLocation, searchRadius);
+    }
 
-    console.log(`Generated ${points.length} heatmap points from real incidents`);
+    // Sort by weight (highest first) and limit total points
+    points = points
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 50); // Limit for performance
+    
+    console.log(`✅ Generated ${points.length} heatmap points (${points.filter(p => p.type === 'historical_incident').length} incidents, ${points.filter(p => p.type === 'news_activity').length} news)`);
+    
     return points;
-
   } catch (error) {
-    console.error('Error generating heatmap points:', error);
+    console.error('❌ Error generating heatmap points:', error);
     return generateFallbackHeatmapPoints(searchLocation, searchRadius);
   }
 }
 
-/**
- * Fallback heatmap generation when no real data is available
- */
+// Fallback heatmap generation
 function generateFallbackHeatmapPoints(searchLocation: any, searchRadius: number): any[] {
-  console.log('Generating fallback heatmap points...');
+  console.log('📍 Generating fallback heatmap points');
   
   const points = [];
-  const centerLat = searchLocation.latitude;
-  const centerLon = searchLocation.longitude;
+  const numPoints = Math.min(15, Math.max(5, Math.floor(searchRadius / 200)));
   
-  // Generate fewer, more realistic points
-  const pointCount = Math.floor(searchRadius / 200) + 2; // Scale with radius
-  
-  for (let i = 0; i < pointCount; i++) {
-    const angle = Math.random() * 2 * Math.PI;
-    const distance = Math.random() * searchRadius * 0.8; // Stay within 80% of radius
+  for (let i = 0; i < numPoints; i++) {
+    const angle = (Math.PI * 2 * i) / numPoints + Math.random() * 0.5;
+    const distance = Math.random() * (searchRadius * 0.8);
+    const distanceKm = distance / 1000;
     
-    const latOffset = (distance * Math.cos(angle)) / 111000;
-    const lonOffset = (distance * Math.sin(angle)) / (111000 * Math.cos(centerLat * Math.PI / 180));
-    
-    const weight = Math.random() * 0.6 + 0.2; // Lower weights for fallback
+    const lat = searchLocation.latitude + (distanceKm / 111) * Math.cos(angle);
+    const lng = searchLocation.longitude + (distanceKm / (111 * Math.cos(searchLocation.latitude * Math.PI / 180))) * Math.sin(angle);
     
     points.push({
-      latitude: centerLat + latOffset,
-      longitude: centerLon + lonOffset,
-      weight: weight,
-      intensity: weight,
-      source: 'fallback'
+      lat: lat,
+      lng: lng,
+      weight: Math.random() * 0.6 + 0.2, // Random weight between 0.2-0.8
+      type: 'fallback',
+      synthetic: true
     });
   }
   
-  console.log(`Generated ${points.length} fallback heatmap points`);
   return points;
+}
+
+// Enhanced mock news generation for areas with no real data
+function generateMockFloodNews(address: string, searchId: string, searchRadius: number) {
+  console.log('📝 Generating enhanced mock flood news for:', address);
+  
+  const location = extractLocationKeywords(address);
+  const currentDate = new Date();
+  const recentDates = Array.from({length: 7}, (_, i) => {
+    const date = new Date(currentDate);
+    date.setDate(date.getDate() - Math.floor(Math.random() * 30)); // Past 30 days
+    return date;
+  });
+
+  const mockTemplates = [
+    {
+      title: `${location}地區豪雨積水 市府啟動抽水設備`,
+      content: `受到梅雨鋒面影響，${location}地區出現短時間強降雨，部分低窪地區有積水情形。市府已立即啟動移動式抽水機，並派遣清潔隊清理水溝落葉，確保排水順暢。目前積水已逐漸消退，交通恢復正常。`,
+      source: '台灣新聞網',
+      type: '梅雨積水'
+    },
+    {
+      title: `${location}排水系統改善工程完工 提升防洪能力`,
+      content: `${location}地區的排水系統改善工程已順利完工，新增大型雨水下水道及滯洪池，大幅提升該區域的防洪排水能力。工程總投資5億元，預計可有效降低未來豪雨時的淹水風險。`,
+      source: '公共電視',
+      type: '防洪建設'
+    },
+    {
+      title: `${location}水患防治計畫獲中央補助 預計明年動工`,
+      content: `${location}地區水患防治計畫獲得中央政府3億元補助，將興建抽水站及改善排水設施。計畫預計明年初動工，工期約18個月，完工後可大幅提升該地區的防洪韌性。`,
+      source: '聯合新聞網',
+      type: '政府建設'
+    },
+    {
+      title: `${location}區公所舉辦防災演練 加強居民應變能力`,
+      content: `${location}區公所今日舉辦水災防災演練，模擬豪雨來襲時的緊急應變措施。演練包括疏散路線規劃、沙包堆疊、抽水設備操作等項目，約200名居民參與，提升社區防災意識。`,
+      source: '民視新聞',
+      type: '防災演練'
+    },
+    {
+      title: `${location}智慧防汛系統上線 即時監控水位變化`,
+      content: `${location}地區新設置的智慧防汛系統正式啟用，透過IoT感測器即時監控河川及下水道水位。系統整合氣象資料進行預警分析，可提前2-4小時發布淹水警報，讓民眾有充足時間應變。`,
+      source: '科技新報',
+      type: '智慧防汛'
+    },
+    {
+      title: `${location}綠建築雨水回收計畫 減緩都市洪患`,
+      content: `${location}推動綠建築雨水回收計畫，鼓勵建築物設置雨水貯留設施。計畫已有50棟建築參與，總雨水回收量達10萬噸，有效減少暴雨時的地表逕流，降低都市洪患風險。`,
+      source: '環境資訊中心',
+      type: '環保建設'
+    }
+  ];
+
+  return mockTemplates.map((template, index) => ({
+    search_id: searchId,
+    title: template.title,
+    url: `https://mock-news-${location}-${index + 1}.tw/articles/${Date.now() + index}`,
+    source: template.source,
+    content_snippet: template.content,
+    publish_date: recentDates[index % recentDates.length].toISOString(),
+    content_type: '模擬新聞',
+    location_match_level: 'simulated',
+    relevance_score: 5,
+    created_at: new Date().toISOString()
+  }));
 }
