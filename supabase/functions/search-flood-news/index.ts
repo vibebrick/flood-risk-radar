@@ -91,7 +91,7 @@ serve(async (req) => {
     // If we already have news for this location, return it
     if (existingNews && existingNews.length > 0) {
       console.log(`Returning ${existingNews.length} existing news items`);
-      const points = generateHeatmapPoints(existingNews, searchLocation, searchRadius);
+      const points = await generateHeatmapPoints(existingNews, searchLocation, searchRadius, supabase);
       return new Response(
         JSON.stringify({ 
           success: true, 
@@ -391,8 +391,8 @@ serve(async (req) => {
 
     console.log(`Prepared ${externalNews.length} news items (external or mock)`);
 
-    // Generate heatmap points
-    const points = generateHeatmapPoints(externalNews, searchLocation, searchRadius);
+    // Generate heatmap points based on real flood incidents from the database
+    const points = await generateHeatmapPoints(externalNews, searchLocation, searchRadius, supabase);
 
     return new Response(
       JSON.stringify({ 
@@ -570,33 +570,102 @@ function extractLocationKeywords(address: string): string {
   return keywords.replace(/\d+號.*/, '').trim(); // Remove house numbers
 }
 
-function generateHeatmapPoints(news: any[], center: { latitude: number; longitude: number }, radiusMeters: number) {
-  const R = 6371000; // Earth radius in meters
-  const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
-  const maxDist = Math.max(50, Math.min(radiusMeters, 1500)); // cap spread for focus
+/**
+ * Generates heatmap points based on real flood incidents from the database
+ */
+async function generateHeatmapPoints(news: any[], searchLocation: any, searchRadius: number, supabaseClient: any): Promise<any[]> {
+  console.log(`Generating heatmap points for search area...`);
+  
+  const centerLat = searchLocation.latitude;
+  const centerLon = searchLocation.longitude;
+  
+  try {
+    // Fetch real flood incidents within the search radius
+    const { data: floodIncidents, error } = await supabaseClient.rpc('get_flood_incidents_within_radius', {
+      center_lat: centerLat,
+      center_lon: centerLon,
+      radius_meters: searchRadius
+    });
 
-  return news.map((n) => {
+    if (error) {
+      console.error('Error fetching flood incidents for heatmap:', error);
+      return generateFallbackHeatmapPoints(searchLocation, searchRadius);
+    }
+
+    if (!floodIncidents || floodIncidents.length === 0) {
+      console.log('No flood incidents found, generating fallback points');
+      return generateFallbackHeatmapPoints(searchLocation, searchRadius);
+    }
+
+    console.log(`Found ${floodIncidents.length} real flood incidents for heatmap`);
+
+    // Convert flood incidents to heatmap points
+    const points = floodIncidents.map((incident: any) => {
+      // Calculate time-based weight (more recent incidents have higher weight)
+      const incidentDate = new Date(incident.incident_date);
+      const now = new Date();
+      const daysDiff = (now.getTime() - incidentDate.getTime()) / (1000 * 60 * 60 * 24);
+      const timeWeight = Math.max(0.1, 1 - (daysDiff / 365)); // Decay over 1 year
+      
+      // Severity-based weight
+      const severityWeight = (incident.severity_level || 1) / 3;
+      
+      // Distance-based weight (closer incidents have higher weight)
+      const distanceWeight = Math.max(0.2, 1 - (incident.distance_meters / searchRadius));
+      
+      const combinedWeight = (timeWeight * 0.4) + (severityWeight * 0.4) + (distanceWeight * 0.2);
+      
+      return {
+        latitude: parseFloat(incident.latitude),
+        longitude: parseFloat(incident.longitude),
+        weight: Math.min(1.0, Math.max(0.1, combinedWeight)),
+        intensity: Math.min(1.0, Math.max(0.1, combinedWeight)),
+        source: 'real_incident',
+        severity: incident.severity_level,
+        date: incident.incident_date
+      };
+    });
+
+    console.log(`Generated ${points.length} heatmap points from real incidents`);
+    return points;
+
+  } catch (error) {
+    console.error('Error generating heatmap points:', error);
+    return generateFallbackHeatmapPoints(searchLocation, searchRadius);
+  }
+}
+
+/**
+ * Fallback heatmap generation when no real data is available
+ */
+function generateFallbackHeatmapPoints(searchLocation: any, searchRadius: number): any[] {
+  console.log('Generating fallback heatmap points...');
+  
+  const points = [];
+  const centerLat = searchLocation.latitude;
+  const centerLon = searchLocation.longitude;
+  
+  // Generate fewer, more realistic points
+  const pointCount = Math.floor(searchRadius / 200) + 2; // Scale with radius
+  
+  for (let i = 0; i < pointCount; i++) {
     const angle = Math.random() * 2 * Math.PI;
-    const dist = Math.random() * maxDist;
-    const dByR = dist / R;
-
-    const lat1 = center.latitude * Math.PI / 180;
-    const lon1 = center.longitude * Math.PI / 180;
-
-    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dByR) + Math.cos(lat1) * Math.sin(dByR) * Math.cos(angle));
-    const lon2 = lon1 + Math.atan2(Math.sin(angle) * Math.sin(dByR) * Math.cos(lat1), Math.cos(dByR) - Math.sin(lat1) * Math.sin(lat2));
-
-    const latitude = lat2 * 180 / Math.PI;
-    const longitude = lon2 * 180 / Math.PI;
-
-    let weight = 0.7;
-    try {
-      if (n.publish_date) {
-        const days = Math.max(0, (Date.now() - new Date(n.publish_date).getTime()) / (1000 * 60 * 60 * 24));
-        weight = clamp(1 - days / 30, 0.3, 1);
-      }
-    } catch (_e) { /* ignore */ }
-
-    return { latitude, longitude, weight: Number(weight.toFixed(2)) };
-  });
+    const distance = Math.random() * searchRadius * 0.8; // Stay within 80% of radius
+    
+    const latOffset = (distance * Math.cos(angle)) / 111000;
+    const lonOffset = (distance * Math.sin(angle)) / (111000 * Math.cos(centerLat * Math.PI / 180));
+    
+    const weight = Math.random() * 0.6 + 0.2; // Lower weights for fallback
+    
+    points.push({
+      latitude: centerLat + latOffset,
+      longitude: centerLon + lonOffset,
+      weight: weight,
+      intensity: weight,
+      source: 'fallback'
+    });
+  }
+  
+  console.log(`Generated ${points.length} fallback heatmap points`);
+  return points;
 }
