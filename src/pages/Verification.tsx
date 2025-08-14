@@ -98,9 +98,12 @@ export const Verification: React.FC = () => {
           const { data: newsResult, error: newsError } = await supabase.functions
             .invoke('search-flood-news', {
               body: {
-                query: '台南淹水',
-                location: { latitude: 23.0, longitude: 120.2 },
-                radius: 500
+                searchLocation: {
+                  latitude: 23.0,
+                  longitude: 120.2,
+                  address: '台南市'
+                },
+                searchRadius: 500
               }
             });
           
