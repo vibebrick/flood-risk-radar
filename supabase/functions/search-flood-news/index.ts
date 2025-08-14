@@ -52,12 +52,13 @@ serve(async (req) => {
       );
     }
     
-    if (!searchLocation.latitude || !searchLocation.longitude) {
+    if (searchLocation.latitude === undefined || searchLocation.latitude === null || 
+        searchLocation.longitude === undefined || searchLocation.longitude === null) {
       console.error('Missing latitude or longitude in searchLocation:', searchLocation);
       return new Response(
         JSON.stringify({ 
           success: false, 
-          error: 'searchLocation must contain latitude and longitude' 
+          error: 'searchLocation must contain valid latitude and longitude coordinates' 
         }),
         { 
           status: 400,
