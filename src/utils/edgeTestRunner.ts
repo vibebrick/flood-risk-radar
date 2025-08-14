@@ -28,10 +28,12 @@ export const testEdgeFunctions = {
     console.log(`Testing flood search for: ${locationName}`);
     const { data, error } = await supabase.functions.invoke('search-flood-news', {
       body: {
-        locationName,
-        latitude,
-        longitude,
-        radiusKm
+        searchLocation: {
+          latitude,
+          longitude,
+          address: locationName
+        },
+        searchRadius: radiusKm * 1000 // Convert km to meters
       }
     });
     if (error) throw error;
