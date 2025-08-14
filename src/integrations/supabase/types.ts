@@ -14,6 +14,57 @@ export type Database = {
   }
   public: {
     Tables: {
+      flood_incidents: {
+        Row: {
+          address: string | null
+          confidence_score: number | null
+          created_at: string
+          data_source: string
+          id: string
+          incident_date: string
+          latitude: number
+          longitude: number
+          severity_level: number | null
+          source_content: string | null
+          source_title: string | null
+          source_url: string | null
+          updated_at: string
+          verified: boolean | null
+        }
+        Insert: {
+          address?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          data_source: string
+          id?: string
+          incident_date: string
+          latitude: number
+          longitude: number
+          severity_level?: number | null
+          source_content?: string | null
+          source_title?: string | null
+          source_url?: string | null
+          updated_at?: string
+          verified?: boolean | null
+        }
+        Update: {
+          address?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          data_source?: string
+          id?: string
+          incident_date?: string
+          latitude?: number
+          longitude?: number
+          severity_level?: number | null
+          source_content?: string | null
+          source_title?: string | null
+          source_url?: string | null
+          updated_at?: string
+          verified?: boolean | null
+        }
+        Relationships: []
+      }
       flood_news: {
         Row: {
           content_snippet: string | null
@@ -105,6 +156,23 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      calculate_distance: {
+        Args: { lat1: number; lon1: number; lat2: number; lon2: number }
+        Returns: number
+      }
+      get_flood_incidents_within_radius: {
+        Args: { center_lat: number; center_lon: number; radius_meters: number }
+        Returns: {
+          id: string
+          latitude: number
+          longitude: number
+          address: string
+          incident_date: string
+          severity_level: number
+          data_source: string
+          distance_meters: number
+        }[]
+      }
       get_search_stats: {
         Args: Record<PropertyKey, never>
         Returns: {
