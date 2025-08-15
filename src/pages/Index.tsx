@@ -3,6 +3,7 @@ import { SearchForm } from '@/components/SearchForm';
 import { FloodRiskMap } from '@/components/FloodRiskMap';
 import { NewsResults } from '@/components/NewsResults';
 import { SearchStats } from '@/components/SearchStats';
+import { APIStatus } from '@/components/APIStatus';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Shield, Droplets, AlertTriangle, Info } from 'lucide-react';
@@ -237,6 +238,8 @@ const Index = () => {
             />
 
             <SearchStats currentSearch={currentSearchStats} />
+            
+            <APIStatus />
 
             {/* Risk Level Indicator */}
             {searchLocation && (

@@ -219,7 +219,13 @@ async function fetchFromGovernmentAPIs(locationKeywords: string): Promise<any[]>
     
     // 中央氣象署 - 即時雨量資料
     try {
-      const weatherResponse = await fetch('https://opendata.cwb.gov.tw/api/v1/rest/datastore/O-A0002-001?Authorization=CWB-B0F847FC-4A29-4C78-AD45-4AD6AE68A162&format=JSON&elementName=RAIN', {
+      const cwbApiKey = Deno.env.get('CWA_API_KEY');
+      if (!cwbApiKey) {
+        console.log('⚠️ CWA API key not configured');
+        return results;
+      }
+      
+      const weatherResponse = await fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001?Authorization=${cwbApiKey}&format=JSON&elementName=RAIN`, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; FloodNewsBot/1.0)',
           'Accept': 'application/json'
@@ -256,12 +262,13 @@ async function fetchFromGovernmentAPIs(locationKeywords: string): Promise<any[]>
       console.log('🌧️ Weather API error:', cwbError.message);
     }
 
-    // 水利署 - 即時水位資料
+    // 水利署 - 即時水位資料 (使用正確端點)
     try {
-      const waterResponse = await fetch('https://data.wra.gov.tw/Service/OpenData.aspx?format=json&id=fcd9e6c9-53c2-42ce-b637-09b4ee5e2400', {
+      const waterResponse = await fetch('https://data.wra.gov.tw/Service/OpenData.aspx?format=json&id=2a1bcbc5-e0a1-4c7a-8dd8-9c3c06c8e0b4', {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; FloodNewsBot/1.0)',
-          'Accept': 'application/json'
+          'Accept': 'application/json',
+          'Referer': 'https://data.wra.gov.tw/'
         }
       });
       
@@ -294,12 +301,13 @@ async function fetchFromGovernmentAPIs(locationKeywords: string): Promise<any[]>
       console.log('💧 Water level API error:', waterError.message);
     }
 
-    // 災害防救署 - 應變管理資訊
+    // 災害防救署 - 災防告警資訊 (使用正確端點)
     try {
-      const ncdrResponse = await fetch('https://alerts.ncdr.nat.gov.tw/api/cap/1.2/', {
+      const ncdrResponse = await fetch('https://alerts.ncdr.nat.gov.tw/api/cap/1.2/all.json', {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; FloodNewsBot/1.0)',
-          'Accept': 'application/json'
+          'Accept': 'application/json',
+          'Referer': 'https://alerts.ncdr.nat.gov.tw/'
         }
       });
       
@@ -403,7 +411,7 @@ async function fetchFromGDELT(keywords: string): Promise<any[]> {
   }
 }
 
-// 真實新聞媒體整合 - 使用主流媒體RSS
+// 真實新聞媒體整合 - 使用有效的RSS源
 async function fetchFromRealNews(locationKeywords: string): Promise<any[]> {
   const results: any[] = [];
   
@@ -414,13 +422,13 @@ async function fetchFromRealNews(locationKeywords: string): Promise<any[]> {
       `${locationKeywords} 積水 道路`
     ];
     
-    // 主流媒體RSS源
+    // 已驗證可用的媒體RSS源
     const mediaRSSFeeds = [
-      { name: '中央社', url: 'https://feeds.cna.com.tw/rssfeed/Taiwan' },
-      { name: '自由時報', url: 'https://news.ltn.com.tw/rss/focus.xml' },
-      { name: '聯合新聞網', url: 'https://udn.com/rssfeed/news/2/6638?ch=news' },
-      { name: '蘋果新聞網', url: 'https://tw.appledaily.com/rss' },
-      { name: '三立新聞', url: 'https://www.setn.com/Rss.aspx?PageGroupID=0' }
+      { name: '公視新聞', url: 'https://news.pts.org.tw/rss.xml' },
+      { name: '中廣新聞', url: 'https://www.bcc.com.tw/rss/newsrss.xml' },
+      { name: '大紀元', url: 'https://www.epochtimes.com/b5/nf1334915.xml' },
+      { name: 'Yahoo新聞', url: 'https://tw.news.yahoo.com/rss' },
+      { name: 'Now新聞', url: 'https://news.now.com/rss/zh/local' }
     ];
     
     // 從各大媒體RSS獲取新聞
