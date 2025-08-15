@@ -15,12 +15,20 @@ serve(async (req) => {
     const { location = '台北市' } = await req.json().catch(() => ({}));
     
     const cwbApiKey = Deno.env.get('CWA_API_KEY');
+    console.log(`🔍 Checking CWA_API_KEY availability...`);
+    console.log(`🔑 API Key status: ${cwbApiKey ? 'Found' : 'Not found'}`);
+    
     if (!cwbApiKey) {
+      console.log(`❌ CWA_API_KEY environment variable is not set`);
       return new Response(
         JSON.stringify({ 
           success: false, 
           error: 'CWA_API_KEY not configured',
-          hasApiKey: false
+          hasApiKey: false,
+          debug: {
+            env_check: 'CWA_API_KEY not found in environment variables',
+            timestamp: new Date().toISOString()
+          }
         }),
         { 
           status: 400, 
