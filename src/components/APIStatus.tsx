@@ -29,22 +29,41 @@ export function APIStatus() {
     try {
       // 測試氣象署地理編碼
       try {
-        await testEdgeFunctions.testGeocoding('台北市信義區');
-        updateServiceStatus('中央氣象署', 'success', 'API連線正常');
+        const result = await testEdgeFunctions.testGeocoding('台北市信義區');
+        if (result?.success) {
+          updateServiceStatus('中央氣象署', 'success', '地理編碼API正常');
+        } else {
+          updateServiceStatus('中央氣象署', 'warning', '地理編碼有問題');
+        }
       } catch (error) {
-        updateServiceStatus('中央氣象署', 'error', 'API金鑰需要設定');
+        console.error('CWA geocoding test error:', error);
+        updateServiceStatus('中央氣象署', 'error', `地理編碼失敗: ${error.message}`);
       }
 
       // 測試淹水新聞搜尋功能
       try {
         const searchResult = await testEdgeFunctions.testFloodSearch('台北市', 25.033, 121.565);
-        if (searchResult?.news?.length > 0) {
-          updateServiceStatus('RSS新聞', 'success', `找到 ${searchResult.news.length} 則新聞`);
+        if (searchResult?.success) {
+          updateServiceStatus('RSS新聞', 'success', `搜尋功能正常 (${searchResult.news?.length || 0} 則)`);
+          
+          // 同時更新災防署和GDELT狀態（基於實際API回應）
+          if (searchResult.stats?.realDataSources > 0) {
+            updateServiceStatus('災防署', 'success', 'API整合正常');
+            updateServiceStatus('GDELT新聞', 'success', '國際新聞資料庫正常');
+          } else {
+            updateServiceStatus('災防署', 'warning', 'API需要申請');
+            updateServiceStatus('GDELT新聞', 'warning', '查詢格式需優化');
+          }
         } else {
-          updateServiceStatus('RSS新聞', 'warning', '暫無相關新聞');
+          updateServiceStatus('RSS新聞', 'error', `搜尋失敗: ${searchResult?.error || 'Unknown error'}`);
+          updateServiceStatus('災防署', 'error', 'API連線失敗');
+          updateServiceStatus('GDELT新聞', 'error', '資料庫連線失敗');
         }
       } catch (error) {
-        updateServiceStatus('RSS新聞', 'error', '新聞搜尋失敗');
+        console.error('Flood search test error:', error);
+        updateServiceStatus('RSS新聞', 'error', `搜尋失敗: ${error.message}`);
+        updateServiceStatus('災防署', 'error', 'API測試失敗');
+        updateServiceStatus('GDELT新聞', 'error', '測試失敗');
       }
 
       // 檢查淹水事件資料庫
@@ -59,9 +78,7 @@ export function APIStatus() {
         updateServiceStatus('水利署', 'error', '資料庫連線失敗');
       }
 
-      // 模擬其他API狀態
-      updateServiceStatus('災防署', 'warning', 'API金鑰待申請');
-      updateServiceStatus('GDELT新聞', 'warning', '查詢格式需優化');
+      // 上面已經在搜尋測試中更新災防署和GDELT狀態
 
     } catch (error) {
       console.error('API狀態檢查失敗:', error);

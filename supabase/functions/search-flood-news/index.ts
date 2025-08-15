@@ -55,7 +55,7 @@ serve(async (req) => {
     
     if (existingSearches && existingSearches.length > 0) {
       const existingSearch = existingSearches[0];
-      const { data: updatedSearch } = await supabase
+      const { data: updatedSearch, error: updateError } = await supabase
         .from('flood_searches')
         .update({ 
           search_count: existingSearch.search_count + 1,
@@ -64,10 +64,16 @@ serve(async (req) => {
         .eq('id', existingSearch.id)
         .select()
         .single();
-      searchId = existingSearch.id;
+      
+      if (updateError) {
+        console.error('Error updating search record:', updateError);
+        searchId = existingSearch.id;
+      } else {
+        searchId = updatedSearch?.id || existingSearch.id;
+      }
       console.log('📊 Updated existing search record:', searchId);
     } else {
-      const { data: newSearch } = await supabase
+      const { data: newSearch, error: insertError } = await supabase
         .from('flood_searches')
         .insert({
           location_name: searchLocation.address || `${searchLocation.latitude}, ${searchLocation.longitude}`,
@@ -79,7 +85,14 @@ serve(async (req) => {
         })
         .select()
         .single();
-      searchId = newSearch.id;
+      
+      if (insertError) {
+        console.error('Error creating search record:', insertError);
+        // Generate a fallback searchId
+        searchId = crypto.randomUUID();
+      } else {
+        searchId = newSearch?.id || crypto.randomUUID();
+      }
       console.log('📝 Created new search record:', searchId);
     }
 
