@@ -14,11 +14,11 @@ interface APIService {
 
 export function APIStatus() {
   const [services, setServices] = useState<APIService[]>([
-    { name: '中央氣象署', status: 'checking', message: '檢查中...' },
-    { name: '水利署', status: 'checking', message: '檢查中...' },
-    { name: '災防署', status: 'checking', message: '檢查中...' },
-    { name: 'GDELT新聞', status: 'checking', message: '檢查中...' },
-    { name: 'RSS新聞', status: 'checking', message: '檢查中...' }
+    { name: '中央氣象署', status: 'checking', message: '檢查地理編碼API...' },
+    { name: '水利署', status: 'warning', message: '未申請API' },
+    { name: '災防署', status: 'warning', message: '未申請API' },
+    { name: 'GDELT新聞', status: 'warning', message: '未整合' },
+    { name: 'RSS新聞', status: 'checking', message: '檢查搜尋功能...' }
   ]);
   
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -40,45 +40,34 @@ export function APIStatus() {
         updateServiceStatus('中央氣象署', 'error', `地理編碼失敗: ${error.message}`);
       }
 
-      // 測試淹水新聞搜尋功能
+      // 測試淹水新聞搜尋功能（僅測試基本搜尋，不涉及真實API）
       try {
         const searchResult = await testEdgeFunctions.testFloodSearch('台北市', 25.033, 121.565);
-        if (searchResult?.success) {
-          updateServiceStatus('RSS新聞', 'success', `搜尋功能正常 (${searchResult.news?.length || 0} 則)`);
-          
-          // 同時更新災防署和GDELT狀態（基於實際API回應）
-          if (searchResult.stats?.realDataSources > 0) {
-            updateServiceStatus('災防署', 'success', 'API整合正常');
-            updateServiceStatus('GDELT新聞', 'success', '國際新聞資料庫正常');
-          } else {
-            updateServiceStatus('災防署', 'warning', 'API需要申請');
-            updateServiceStatus('GDELT新聞', 'warning', '查詢格式需優化');
-          }
+        if (searchResult?.success && searchResult.news?.length >= 0) {
+          updateServiceStatus('RSS新聞', 'success', `基本搜尋正常 (${searchResult.news?.length || 0} 則模擬資料)`);
         } else {
-          updateServiceStatus('RSS新聞', 'error', `搜尋失敗: ${searchResult?.error || 'Unknown error'}`);
-          updateServiceStatus('災防署', 'error', 'API連線失敗');
-          updateServiceStatus('GDELT新聞', 'error', '資料庫連線失敗');
+          updateServiceStatus('RSS新聞', 'error', `搜尋功能失敗: ${searchResult?.error || 'Unknown error'}`);
         }
       } catch (error) {
         console.error('Flood search test error:', error);
-        updateServiceStatus('RSS新聞', 'error', `搜尋失敗: ${error.message}`);
-        updateServiceStatus('災防署', 'error', 'API測試失敗');
-        updateServiceStatus('GDELT新聞', 'error', '測試失敗');
+        updateServiceStatus('RSS新聞', 'error', `搜尋功能失敗: ${error.message}`);
       }
 
-      // 檢查淹水事件資料庫
+      // 淹水事件資料庫檢查（保持水利署為未申請狀態，因為這是模擬資料）
       try {
         const count = await testEdgeFunctions.getFloodIncidentsCount();
         if (count > 0) {
-          updateServiceStatus('水利署', 'success', `資料庫有 ${count} 筆記錄`);
+          // 即使有資料，也標記為模擬資料
+          updateServiceStatus('水利署', 'warning', `未申請API (${count} 筆模擬資料)`);
         } else {
-          updateServiceStatus('水利署', 'warning', '資料庫尚無資料');
+          updateServiceStatus('水利署', 'warning', '未申請API');
         }
       } catch (error) {
-        updateServiceStatus('水利署', 'error', '資料庫連線失敗');
+        updateServiceStatus('水利署', 'warning', '未申請API');
       }
 
-      // 上面已經在搜尋測試中更新災防署和GDELT狀態
+      // 保持災防署和GDELT為未申請/未整合狀態
+      // 不進行任何API測試，維持初始警告狀態
 
     } catch (error) {
       console.error('API狀態檢查失敗:', error);
@@ -167,7 +156,7 @@ export function APIStatus() {
         {successCount < totalCount && (
           <div className="mt-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
             <p className="text-sm text-yellow-800">
-              <strong>注意:</strong> 部分API尚未完全整合。請確認已申請必要的API金鑰。
+              <strong>系統狀態說明:</strong> 目前僅中央氣象署地理編碼和基本搜尋功能已整合。其他API需要申請相關機關的使用權限。
             </p>
           </div>
         )}
