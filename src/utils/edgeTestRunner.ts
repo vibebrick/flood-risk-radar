@@ -60,10 +60,44 @@ export const testEdgeFunctions = {
 
   async testCWARainfallAPI(location: string = '台北市') {
     console.log(`Testing CWA rainfall API for: ${location}`);
-    const { data, error } = await supabase.functions.invoke('test-cwa-api', {
-      body: { location }
-    });
-    if (error) throw error;
-    return data;
+    try {
+      const { data, error } = await supabase.functions.invoke('test-cwa-api', {
+        body: { location },
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (error) {
+        console.error('Edge function invocation error:', error);
+        return {
+          success: false,
+          error: `Function invocation failed: ${error.message}`,
+          hasApiKey: false,
+          debug: {
+            invokeError: error,
+            timestamp: new Date().toISOString()
+          }
+        };
+      }
+
+      // Ensure we return a valid object even if data is null
+      return data || {
+        success: false,
+        error: 'No response data received',
+        hasApiKey: false
+      };
+    } catch (error) {
+      console.error('Network error calling test-cwa-api:', error);
+      return {
+        success: false,
+        error: `Network error: ${error.message}`,
+        hasApiKey: false,
+        debug: {
+          networkError: error.message,
+          timestamp: new Date().toISOString()
+        }
+      };
+    }
   }
 };

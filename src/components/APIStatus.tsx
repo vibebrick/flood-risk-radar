@@ -28,18 +28,29 @@ export function APIStatus() {
     
     try {
       // 測試氣象署即時雨量API
+      updateServiceStatus('中央氣象署', 'checking', '正在測試即時雨量API...');
+      
       try {
         const result = await testEdgeFunctions.testCWARainfallAPI('台北市');
+        console.log('CWA API test result:', result);
+        
         if (result?.success) {
           const stationCount = result.testResults?.totalStations || 0;
           const relevantCount = result.testResults?.relevantStations || 0;
-          updateServiceStatus('中央氣象署', 'success', `即時雨量API正常 (${stationCount}個測站, ${relevantCount}個相關)`);
+          updateServiceStatus('中央氣象署', 'success', 
+            `即時雨量API正常 (${stationCount}個測站, ${relevantCount}個相關測站)`);
         } else {
-          updateServiceStatus('中央氣象署', 'error', `API錯誤: ${result?.error || 'Unknown error'}`);
+          const errorMsg = result?.error || 'Unknown error';
+          const hasKey = result?.hasApiKey ?? false;
+          const debugInfo = result?.debug ? ` [${JSON.stringify(result.debug).substring(0, 50)}...]` : '';
+          
+          updateServiceStatus('中央氣象署', 'error', 
+            `${hasKey ? 'API請求失敗' : 'API Key未設定'}: ${errorMsg}${debugInfo}`);
         }
       } catch (error) {
         console.error('CWA API test error:', error);
-        updateServiceStatus('中央氣象署', 'error', `API測試失敗: ${error.message}`);
+        updateServiceStatus('中央氣象署', 'error', 
+          `API測試失敗: ${error.message}`);
       }
 
       // 備用：測試地理編碼功能
