@@ -230,7 +230,7 @@ async function fetchFromGovernmentAPIs(locationKeywords: string): Promise<any[]>
   try {
     console.log('🏛️ Fetching government flood data...');
     
-    // 中央氣象署 - 即時雨量資料
+    // 中央氣象署 - 即時雨量資料 (O-A0002-001)
     try {
       const cwbApiKey = Deno.env.get('CWA_API_KEY');
       if (!cwbApiKey) {
@@ -238,41 +238,76 @@ async function fetchFromGovernmentAPIs(locationKeywords: string): Promise<any[]>
         return results;
       }
       
-      const weatherResponse = await fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001?Authorization=${cwbApiKey}&format=JSON&elementName=RAIN`, {
+      console.log('🌧️ Fetching real-time rainfall data from CWA...');
+      
+      // 正確的CWA API端點格式
+      const weatherResponse = await fetch(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001?Authorization=${cwbApiKey}&format=JSON&elementName=RAIN&locationName=${locationKeywords}`, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; FloodNewsBot/1.0)',
+          'User-Agent': 'FloodRiskApp/1.0',
           'Accept': 'application/json'
         }
       });
       
       if (weatherResponse.ok) {
         const weatherData = await weatherResponse.json();
+        console.log('✅ CWA API Response received');
         
-        if (weatherData?.records?.Station) {
-          for (const station of weatherData.records.Station.slice(0, 5)) {
+        if (weatherData?.records?.Station && Array.isArray(weatherData.records.Station)) {
+          console.log(`📊 Found ${weatherData.records.Station.length} rainfall stations`);
+          
+          for (const station of weatherData.records.Station.slice(0, 10)) {
             const stationName = station.StationName || '';
-            if (stationName.includes(locationKeywords.slice(0, 2)) || locationKeywords.slice(0, 2).includes(stationName.slice(0, 2))) {
-              const rainElement = station.ObsTime?.DateTime;
+            const obsTime = station.ObsTime?.DateTime || '';
+            
+            // 檢查該測站是否與搜尋地點相關
+            if (stationName.includes(locationKeywords.slice(0, 2)) || 
+                locationKeywords.slice(0, 2).includes(stationName.slice(0, 2))) {
+              
+              // 解析雨量數據
               const rain1hr = parseFloat(station.RainElement?.Past1hr?.Precipitation || 0);
               const rain24hr = parseFloat(station.RainElement?.Past24hr?.Precipitation || 0);
+              const rainAccumulated = parseFloat(station.RainElement?.Daily?.Precipitation || 0);
               
-              if (rain1hr > 10 || rain24hr > 50) {
+              // 如果有顯著雨量，加入結果
+              if (rain1hr > 5 || rain24hr > 20 || rainAccumulated > 30) {
+                const severity = rain1hr > 30 ? '豪雨' : rain1hr > 15 ? '大雨' : '中雨';
+                const score = rain1hr > 50 ? 10 : rain1hr > 30 ? 9 : rain1hr > 15 ? 8 : 7;
+                
                 results.push({
-                  title: `${stationName} 雨量警報 - 1小時${rain1hr}mm，24小時${rain24hr}mm`,
-                  url: 'https://www.cwb.gov.tw/V8/C/W/OBS_Rain.html',
+                  title: `${stationName} ${severity}警報 - 1小時${rain1hr}mm`,
+                  url: `https://www.cwb.gov.tw/V8/C/W/OBS_Rain.html?StationID=${station.StationId}`,
                   source: '中央氣象署',
-                  content_snippet: `測站: ${stationName}，觀測時間: ${rainElement}，1小時雨量: ${rain1hr}毫米，24小時累積: ${rain24hr}毫米`,
+                  content_snippet: `測站：${stationName}｜觀測時間：${obsTime}｜1小時雨量：${rain1hr}毫米｜24小時累積：${rain24hr}毫米｜日累積：${rainAccumulated}毫米`,
                   publish_date: new Date().toISOString(),
-                  content_type: '政府氣象資料',
-                  relevance_score: rain1hr > 30 ? 9 : 7
+                  content_type: '即時雨量',
+                  relevance_score: score,
+                  location: {
+                    lat: parseFloat(station.GeoInfo?.Coordinates?.[0]?.StationLatitude || 0),
+                    lng: parseFloat(station.GeoInfo?.Coordinates?.[0]?.StationLongitude || 0)
+                  }
                 });
+                
+                console.log(`📍 Added rainfall data: ${stationName} - ${rain1hr}mm/hr`);
               }
             }
           }
         }
+        
+        console.log(`🌧️ CWA rainfall stations processed: ${results.length} significant rainfall records found`);
+      } else {
+        console.log(`❌ CWA API error: ${weatherResponse.status} ${weatherResponse.statusText}`);
+        
+        // 如果API錯誤，嘗試讀取錯誤信息
+        try {
+          const errorText = await weatherResponse.text();
+          console.log('CWA API error details:', errorText.substring(0, 200));
+        } catch (e) {
+          console.log('Could not parse CWA error response');
+        }
       }
     } catch (cwbError) {
-      console.log('🌧️ Weather API error:', cwbError.message);
+      console.error('🌧️ CWA API error:', cwbError.message);
+      console.log('CWA error stack:', cwbError.stack);
     }
 
     // 水利署 - 即時水位資料 (使用正確端點)

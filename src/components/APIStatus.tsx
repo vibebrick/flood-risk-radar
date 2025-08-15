@@ -27,17 +27,29 @@ export function APIStatus() {
     setIsRefreshing(true);
     
     try {
-      // 測試氣象署地理編碼
+      // 測試氣象署即時雨量API
       try {
-        const result = await testEdgeFunctions.testGeocoding('台北市信義區');
+        const result = await testEdgeFunctions.testCWARainfallAPI('台北市');
         if (result?.success) {
-          updateServiceStatus('中央氣象署', 'success', '地理編碼API正常');
+          const stationCount = result.testResults?.totalStations || 0;
+          const relevantCount = result.testResults?.relevantStations || 0;
+          updateServiceStatus('中央氣象署', 'success', `即時雨量API正常 (${stationCount}個測站, ${relevantCount}個相關)`);
         } else {
-          updateServiceStatus('中央氣象署', 'warning', '地理編碼有問題');
+          updateServiceStatus('中央氣象署', 'error', `API錯誤: ${result?.error || 'Unknown error'}`);
         }
       } catch (error) {
-        console.error('CWA geocoding test error:', error);
-        updateServiceStatus('中央氣象署', 'error', `地理編碼失敗: ${error.message}`);
+        console.error('CWA API test error:', error);
+        updateServiceStatus('中央氣象署', 'error', `API測試失敗: ${error.message}`);
+      }
+
+      // 備用：測試地理編碼功能
+      try {
+        const geocodingResult = await testEdgeFunctions.testGeocoding('台北市信義區');
+        if (geocodingResult?.success) {
+          console.log('✅ Geocoding service also working');
+        }
+      } catch (geocodingError) {
+        console.log('⚠️ Geocoding service error:', geocodingError);
       }
 
       // 測試淹水新聞搜尋功能（僅測試基本搜尋，不涉及真實API）

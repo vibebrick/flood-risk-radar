@@ -56,5 +56,14 @@ export const testEdgeFunctions = {
       .limit(limit);
     if (error) throw error;
     return data;
+  },
+
+  async testCWARainfallAPI(location: string = '台北市') {
+    console.log(`Testing CWA rainfall API for: ${location}`);
+    const { data, error } = await supabase.functions.invoke('test-cwa-api', {
+      body: { location }
+    });
+    if (error) throw error;
+    return data;
   }
 };
