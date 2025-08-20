@@ -1,0 +1,100 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ feature/*, main, flood-risk-rader_V2 ]
+  pull_request:
+    branches: [ main, flood-risk-rader_V2 ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Type check
+      run: npm run type-check || npx tsc --noEmit
+      
+    - name: Lint check
+      run: npm run lint
+      
+    - name: Build project
+      run: npm run build
+      
+    - name: Test Edge Functions
+      run: |
+        # 測試 Edge Functions 語法
+        echo "Testing Edge Functions syntax..."
+        for func in supabase/functions/*/index.ts; do
+          echo "Checking $func"
+          npx tsc --noEmit --target es2022 --moduleResolution node "$func"
+        done
+      
+  security:
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Security audit
+      run: npm audit --audit-level moderate
+      
+    - name: Check for secrets
+      run: |
+        echo "Checking for potential secrets..."
+        ! grep -r "sk-" . --exclude-dir=node_modules --exclude-dir=.git || (echo "Found potential OpenAI API key" && exit 1)
+        ! grep -r "SUPABASE_SERVICE_ROLE_KEY.*=" . --exclude-dir=node_modules --exclude-dir=.git || (echo "Found service role key in code" && exit 1)
+        
+  build-preview:
+    runs-on: ubuntu-latest
+    needs: [test, security]
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Build for preview
+      run: npm run build
+      
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-preview
+        path: dist/
+        retention-days: 7
