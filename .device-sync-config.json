@@ -1,0 +1,37 @@
+{
+  "version": "1.0.0",
+  "devices": {
+    "Marcus_Office-win32-367610": {
+      "id": "Marcus_Office-win32-367610",
+      "name": "Marcus_Office (win32)",
+      "os": "win32",
+      "nodeVersion": "v22.14.0",
+      "timestamp": "2025-08-25T05:39:27.612Z",
+      "workingDirectory": "C:\\Users\\y_mea\\flood-risk-radar"
+    }
+  },
+  "sessions": [],
+  "lastDevice": "Marcus_Office-win32-367610",
+  "projectState": {
+    "branch": "feature/real-social-crawlers",
+    "hasUncommittedChanges": true,
+    "lastCommit": "db6fa47 - 🧪 新增 PTT 爬蟲測試與驗證 (5 days ago)",
+    "version": "0.0.0",
+    "lastSync": "2025-08-25T05:39:27.713Z",
+    "syncedFrom": "Marcus_Office-win32-367610"
+  },
+  "environment": {
+    "Node.js": {
+      "available": true,
+      "version": "v22.14.0"
+    },
+    "npm": {
+      "available": true,
+      "version": "11.5.2"
+    },
+    "Git": {
+      "available": true,
+      "version": "git version 2.49.0.windows.1"
+    }
+  }
+}

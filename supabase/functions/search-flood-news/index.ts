@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { PTTCrawler } from './ptt-crawler.ts'
+import { EnhancedNewsFeeds } from './enhanced-news-feeds.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -152,48 +152,63 @@ serve(async (req) => {
     const locationKeywords = extractLocationKeywords(address);
     
     console.log('🎯 Extracted location keywords:', locationKeywords);
-    console.log('🚀 Starting comprehensive news and social media fetch...');
     
-    // Enhanced parallel fetching with improved error handling and better targeting
+    // 檢查是否有有效的快取資料
+    const cacheResult = await checkCacheData(supabase, searchLocation, searchRadius, locationKeywords);
+    if (cacheResult.useCache) {
+      console.log(`💾 使用快取資料: ${cacheResult.news.length} 篇文章 (快取時間: ${cacheResult.cacheAge} 小時)`);
+      
+      // 生成熱力圖點位
+      const points = await generateHeatmapPoints(cacheResult.news, searchLocation, searchRadius, supabase);
+      
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          news: cacheResult.news,
+          searchId: searchId,
+          cached: true,
+          cacheAge: cacheResult.cacheAge,
+          points,
+          dataSource: 'cache',
+          stats: {
+            totalSources: 7,
+            articlesFound: cacheResult.news.length,
+            realDataSources: cacheResult.realDataSources
+          }
+        }),
+        { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+    
+    console.log('🚀 開始從合法資料源獲取新聞和政府資料...');
+    
+    // 僅使用合法的資料源：政府開放資料、國際新聞、RSS新聞
     const [
-      governmentResults, 
+      enhancedNewsResults,
       gdeltResults, 
-      newsResults, 
-      localNewsResults, 
-      pttResults, 
-      dcardResults
+      governmentResults
     ] = await Promise.allSettled([
-      fetchFromGovernmentAPIs(locationKeywords),
+      fetchFromEnhancedNews(locationKeywords),
       fetchFromGDELT(`"${locationKeywords}" AND (淹水 OR 積水 OR 水災 OR 豪雨 OR 暴雨 OR 洪水 OR flood OR flooding) AND (Taiwan OR 台灣 OR 臺灣)`),
-      fetchFromRealNews(locationKeywords),
-      fetchFromLocalNews(locationKeywords),
-      fetchFromRealPTT(locationKeywords),
-      fetchFromRealDcard(locationKeywords)
+      fetchFromGovernmentAPIs(locationKeywords)
     ]);
 
-    // Process results from all sources
-    const governmentNews = governmentResults.status === 'fulfilled' ? governmentResults.value : [];
+    // 處理所有合法資料源的結果
+    const enhancedNews = enhancedNewsResults.status === 'fulfilled' ? enhancedNewsResults.value : [];
     const gdeltNews = gdeltResults.status === 'fulfilled' ? gdeltResults.value : [];
-    const realNews = newsResults.status === 'fulfilled' ? newsResults.value : [];
-    const localNews = localNewsResults.status === 'fulfilled' ? localNewsResults.value : [];
-    const pttNews = pttResults.status === 'fulfilled' ? pttResults.value : [];
-    const dcardNews = dcardResults.status === 'fulfilled' ? dcardResults.value : [];
+    const governmentNews = governmentResults.status === 'fulfilled' ? governmentResults.value : [];
 
-    console.log(`✅ Government data: ${governmentNews.length} articles`);
-    console.log(`✅ GDELT: ${gdeltNews.length} articles`);
-    console.log(`✅ Real News: ${realNews.length} articles`);
-    console.log(`✅ Local News: ${localNews.length} articles`);
-    console.log(`✅ PTT: ${pttNews.length} posts`);
-    console.log(`✅ Dcard: ${dcardNews.length} posts`);
+    console.log(`✅ 增強型新聞整合: ${enhancedNews.length} 篇文章`);
+    console.log(`✅ GDELT 國際新聞: ${gdeltNews.length} 篇文章`);
+    console.log(`✅ 政府開放資料: ${governmentNews.length} 筆資料`);
 
-    // Combine and deduplicate results from all sources
+    // 合併並去重所有合法資料源的結果
     const combinedResults = [
-      ...governmentNews,
+      ...enhancedNews,
       ...gdeltNews,
-      ...realNews,
-      ...localNews,
-      ...pttNews,
-      ...dcardNews
+      ...governmentNews
     ];
 
     const uniqueResults = dedupeByUrl(combinedResults)
@@ -249,11 +264,12 @@ serve(async (req) => {
         points,
         dataSource: finalResults.length > 0 && finalResults[0].content_type !== '地區特定資訊' ? 'real' : 'fallback',
         stats: {
-          totalSources: 6,
+          totalSources: 3,
           articlesFound: finalResults.length,
-          realDataSources: ['政府開放資料', 'GDELT', '新聞媒體', '地方新聞', 'PTT', 'Dcard'].filter((_, i) => 
-            [governmentNews, gdeltNews, realNews, localNews, pttNews, dcardNews][i].length > 0
-          ).length
+          realDataSources: ['政府開放資料', 'GDELT國際新聞', '新聞媒體RSS'].filter((_, i) => 
+            [governmentNews, gdeltNews, enhancedNews][i] && [governmentNews, gdeltNews, enhancedNews][i].length > 0
+          ).length,
+          dataSourceTypes: ['政府開放資料', 'GDELT國際新聞', '新聞媒體RSS']
         }
       }),
       { 
@@ -714,122 +730,7 @@ function getLocalNewsSources(locationKeywords: string) {
   return sources;
 }
 
-// Real PTT forum integration with location-specific content
-async function fetchFromRealPTT(locationKeywords: string): Promise<any[]> {
-  try {
-    console.log(`🔍 Real PTT search for: "${locationKeywords}"`);
-    
-    // 使用真實的 PTT 爬蟲
-    const pttCrawler = new PTTCrawler();
-    const results = await pttCrawler.searchPosts(locationKeywords);
-    
-    console.log(`✅ Real PTT: Found ${results.length} posts`);
-    return results;
-  } catch (error) {
-    console.log('Real PTT fetching error:', error.message);
-    
-    // 備援機制：如果爬蟲失敗，使用智能模擬
-    return generatePTTFallbackData(locationKeywords);
-  }
-}
-
-// PTT 備援資料生成函數
-function generatePTTFallbackData(locationKeywords: string): any[] {
-  console.log('🔄 PTT 備援資料生成...');
-  
-  const fallbackTemplates = [
-    {
-      titleTemplate: `[問卦] ${locationKeywords}排水系統問題`,
-      contentTemplate: `每次下雨${locationKeywords}就積水，是不是該檢討排水系統了？`,
-      board: 'Gossiping'
-    },
-    {
-      titleTemplate: `[情報] ${locationKeywords}淹水注意`,
-      contentTemplate: `${locationKeywords}地區請注意積水狀況，用路人小心安全`,
-      board: getBoardByLocation(locationKeywords)
-    }
-  ];
-  
-  return fallbackTemplates.map((template, index) => ({
-    title: template.titleTemplate,
-    url: `https://www.ptt.cc/bbs/${template.board}/M.${Date.now() + index}.A.PTT.html`,
-    content_snippet: template.contentTemplate,
-    source: 'PTT',
-    content_type: 'PTT論壇',
-    publish_date: new Date(Date.now() - Math.random() * 86400000).toISOString(),
-    relevance_score: 3 + Math.floor(Math.random() * 3)
-  }));
-}
-
-function getBoardByLocation(locationKeywords: string): string {
-  const location = locationKeywords.toLowerCase();
-  if (location.includes('高雄')) return 'Kaohsiung';
-  if (location.includes('台南') || location.includes('臺南')) return 'Tainan';
-  if (location.includes('台中') || location.includes('臺中')) return 'TaichungBun';
-  if (location.includes('桃園')) return 'Taoyuan';
-  return 'Gossiping';
-}
-
-// Real Dcard social platform integration with location-specific discussions
-async function fetchFromRealDcard(locationKeywords: string): Promise<any[]> {
-  const results: any[] = [];
-  
-  try {
-    console.log(`🔍 Real Dcard search for: "${locationKeywords}"`);
-    
-    // Generate realistic, location-specific Dcard posts  
-    const dcardTemplates = [
-      {
-        titleTemplate: `${locationKeywords}淹水問題嚴重嗎？`,
-        contentTemplate: `最近在考慮在${locationKeywords}租房，但聽說那邊容易淹水，有當地人可以分享經驗嗎？`,
-        forum: '租屋板'
-      },
-      {
-        titleTemplate: `${locationKeywords}又開始積水了...`,
-        contentTemplate: `住在${locationKeywords}的痛苦，每次下雨就要煩惱出門問題，政府什麼時候要改善排水啊`,
-        forum: '心情板'
-      },
-      {
-        titleTemplate: `關於${locationKeywords}的排水系統`,
-        contentTemplate: `身為${locationKeywords}居民，真心希望市政府能重視我們這邊的排水問題`,
-        forum: '時事板'
-      },
-      {
-        titleTemplate: `${locationKeywords}機車族的惡夢`,
-        contentTemplate: `每次豪雨天騎車經過${locationKeywords}都超緊張，積水深度完全無法預測`,
-        forum: '機車板'
-      },
-      {
-        titleTemplate: `${locationKeywords}買房要注意淹水嗎？`,
-        contentTemplate: `在看${locationKeywords}的房子，但代書提醒要注意淹水問題，想問大家的看法`,
-        forum: '房屋板'
-      }
-    ];
-    
-    // Generate 2-6 realistic posts based on location
-    const numPosts = Math.floor(Math.random() * 5) + 2;
-    for (let i = 0; i < numPosts && i < dcardTemplates.length; i++) {
-      const template = dcardTemplates[i];
-      const postId = Math.floor(Math.random() * 900000) + 100000;
-      
-      results.push({
-        title: template.titleTemplate,
-        url: `https://www.dcard.tw/f/${template.forum}/${postId}`,
-        content_snippet: template.contentTemplate,
-        source: 'Dcard',
-        content_type: 'Dcard討論',
-        publish_date: new Date(Date.now() - Math.random() * 86400000 * 7).toISOString(),
-        relevance_score: 3 + Math.floor(Math.random() * 3)
-      });
-    }
-    
-    console.log(`✅ Real Dcard: Found ${results.length} location-specific discussions`);
-    return results;
-  } catch (error) {
-    console.log('Real Dcard fetching error:', error.message);
-    return [];
-  }
-}
+// 移除所有社群媒體爬蟲功能，專注於合法免費資料源
 
 // Helper function to extract location keywords
 function extractLocationKeywords(address: string): string {
@@ -1014,4 +915,119 @@ function getCityCharacteristics(locationKeywords: string) {
     drainageSystem: '排水基礎設施',
     protectionLevel: '設計防護標準'
   };
+}
+
+// Twitter 等社群媒體爬蟲已移除，符合免費開放專案的合規要求
+
+// 智能快取檢查函數
+async function checkCacheData(supabase: any, searchLocation: any, searchRadius: number, locationKeywords: string) {
+  try {
+    console.log('💾 檢查快取資料...');
+    
+    // 查找半徑範圍內的相似搜尋
+    const { data: nearbySearches, error: searchError } = await supabase
+      .from('flood_searches')
+      .select(`
+        id,
+        location_name,
+        latitude,
+        longitude,
+        search_radius,
+        updated_at,
+        flood_news(
+          title,
+          url,
+          source,
+          content_snippet,
+          publish_date,
+          content_type
+        )
+      `)
+      .gte('updated_at', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString()); // 6小時內
+    
+    if (searchError) {
+      console.log('快取查詢錯誤:', searchError.message);
+      return { useCache: false, news: [], cacheAge: 0, realDataSources: 0 };
+    }
+    
+    // 檢查是否有適合的快取資料
+    for (const search of nearbySearches || []) {
+      const distance = calculateDistance(
+        searchLocation.latitude,
+        searchLocation.longitude,
+        search.latitude,
+        search.longitude
+      );
+      
+      // 如果在500米範圍內且搜尋半徑相似 (差異不超過50%)
+      if (distance <= 500 && Math.abs(search.search_radius - searchRadius) / searchRadius <= 0.5) {
+        const cacheAge = (Date.now() - new Date(search.updated_at).getTime()) / (1000 * 60 * 60); // 小時
+        
+        // 如果快取資料不超過3小時且有足夠的新聞數量
+        if (cacheAge <= 3 && search.flood_news && search.flood_news.length >= 3) {
+          console.log(`✅ 找到有效快取: ${search.flood_news.length} 篇文章 (${cacheAge.toFixed(1)} 小時前)`);
+          
+          // 分析資料來源
+          const sourceCounts = {};
+          search.flood_news.forEach(news => {
+            sourceCounts[news.source] = (sourceCounts[news.source] || 0) + 1;
+          });
+          
+          const realDataSources = Object.keys(sourceCounts).length;
+          
+          return {
+            useCache: true,
+            news: search.flood_news.map(news => ({
+              ...news,
+              relevance_score: 5 // 快取資料預設相關性
+            })),
+            cacheAge: Math.round(cacheAge * 10) / 10,
+            realDataSources
+          };
+        }
+      }
+    }
+    
+    console.log('❌ 未找到有效快取資料');
+    return { useCache: false, news: [], cacheAge: 0, realDataSources: 0 };
+    
+  } catch (error) {
+    console.error('快取檢查錯誤:', error.message);
+    return { useCache: false, news: [], cacheAge: 0, realDataSources: 0 };
+  }
+}
+
+// 計算兩點之間距離 (米)
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const earthRadius = 6371000; // 地球半徑 (米)
+  const dLat = toRadians(lat2 - lat1);
+  const dLon = toRadians(lon2 - lon1);
+  
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  
+  return earthRadius * c;
+}
+
+function toRadians(degrees: number): number {
+  return degrees * (Math.PI / 180);
+}
+
+// Enhanced news feeds integration
+async function fetchFromEnhancedNews(locationKeywords: string): Promise<any[]> {
+  try {
+    console.log(`🌐 開始增強型新聞整合搜尋: "${locationKeywords}"`);
+    
+    const enhancedNewsFeeds = new EnhancedNewsFeeds();
+    const results = await enhancedNewsFeeds.fetchAllFloodNews(locationKeywords);
+    
+    console.log(`✅ 增強型新聞整合完成: ${results.length} 篇高品質新聞`);
+    return results;
+  } catch (error) {
+    console.error('Enhanced news fetching error:', error.message);
+    return [];
+  }
 }
